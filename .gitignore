@@ -1,0 +1,9 @@
+/.upstream-fixtures.json
+/.upstream-source/
+/firefox/
+/artifacts/
+/obj-orbit/
+__pycache__/
+*.pyc
+/.venv/
+/test-results/

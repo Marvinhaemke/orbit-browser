@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' chrome:; style-src 'self' chrome: 'unsafe-inline'; img-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Orbit Canvas</title>
+  <link rel="stylesheet" href="orbit.css">
+</head>
+<body>
+  <aside class="sidebar" aria-label="Canvas navigation">
+    <div class="wordmark"><span aria-hidden="true">◉</span> orbit <small>LAB</small></div>
+    <div class="workspace-title">My workspace<small>Your real Firefox tabs, connected.</small></div>
+    <button class="nav active" id="fit-nav"><span aria-hidden="true">▦</span> My canvas <span id="tab-count" class="count">0</span></button>
+    <button class="nav" id="import-tabs"><span aria-hidden="true">↻</span> Import open tabs</button>
+    <div class="section-label">FRAMES <button id="sidebar-frame" title="Draw a frame (F)" aria-label="Draw a frame">＋</button></div>
+    <div id="frame-list"></div>
+    <div class="sidebar-bottom"><span class="sparkle" aria-hidden="true">✧</span><strong>Make room for ideas.</strong><p>Drag tabs into a frame.<br>Open the whole frame together.</p><button id="guide-button">Explore the gestures</button><div id="save-status" role="status">Loading workspace…</div></div>
+  </aside>
+  <main>
+    <header class="board-header">
+      <div><div class="breadcrumb">My workspace <span>/</span> Canvas</div><h1>A little space to think<span>.</span></h1><p>Your tabs, ideas, and everything in between.</p></div>
+      <div class="header-actions"><button class="button" id="return-browser">← Return to page</button><button class="button" id="undo" title="Undo board change (Ctrl+Z)">↶ Undo</button><button class="button primary" id="add-tab">＋ Add tab</button></div>
+    </header>
+    <div id="viewport" class="canvas-viewport" tabindex="0" role="region" aria-label="Spatial tab canvas. Arrow keys move selected cards; Space and drag pans.">
+      <div id="world">
+        <svg id="connections" aria-label="Connections and drawings"><defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#9286bc"/></marker></defs><g id="strokes"></g><g id="lines"></g></svg>
+        <div id="frames"></div><div id="items"></div><div id="draft" hidden></div>
+      </div>
+      <div class="canvas-label">A PLACE FOR YOUR NEXT BIG IDEA</div>
+      <div id="empty-state" hidden><span aria-hidden="true">▦</span><h2>Start with a real tab.</h2><p>Add a website or import your open tabs.<br>Then group them into frames and connect your ideas.</p><button class="button primary" id="empty-add">＋ Add a website</button></div>
+      <div class="toolbar" role="toolbar" aria-label="Canvas tools">
+        <button data-tool="select" aria-pressed="true" title="Select and move (V)" aria-label="Select and move"><span aria-hidden="true">↖</span><small>Select</small></button>
+        <button data-tool="hand" aria-pressed="false" title="Pan canvas (H or hold Space)" aria-label="Pan canvas"><span aria-hidden="true">✥</span><small>Pan</small></button><i></i>
+        <button data-tool="note" aria-pressed="false" title="Add sticky note (N)" aria-label="Add sticky note"><span aria-hidden="true">▧</span><small>Note</small></button>
+        <button data-tool="frame" aria-pressed="false" title="Draw a frame (F)" aria-label="Draw frame"><span aria-hidden="true">▣</span><small>Frame</small></button>
+        <button data-tool="connect" aria-pressed="false" title="Connect two cards (C)" aria-label="Connect cards"><span aria-hidden="true">⤳</span><small>Connect</small></button>
+        <button data-tool="draw" aria-pressed="false" title="Freehand draw (D)" aria-label="Freehand draw"><span aria-hidden="true">〰</span><small>Draw</small></button>
+      </div>
+      <div class="zoom-controls"><button id="zoom-out" aria-label="Zoom out">−</button><button id="zoom-value" title="Fit board">100%</button><button id="zoom-in" aria-label="Zoom in">＋</button><i></i><button id="fit" title="Fit board" aria-label="Fit board">⛶</button></div>
+      <div class="canvas-hint" id="canvas-hint">Drag to arrange · Right-click to explore · Scroll to pan</div>
+    </div>
+  </main>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <div id="radial" role="menu" aria-label="Canvas actions" hidden>
+    <div class="radial-center" aria-hidden="true">✧</div>
+    <button data-action="note" role="menuitem" style="--a:0"><span aria-hidden="true">▧</span>Note</button>
+    <button data-action="tab" role="menuitem" style="--a:1"><span aria-hidden="true">＋</span>Tab</button>
+    <button data-action="frame" role="menuitem" style="--a:2"><span aria-hidden="true">▣</span>Frame</button>
+    <button data-action="connect" role="menuitem" style="--a:3"><span aria-hidden="true">⤳</span>Connect</button>
+    <button data-action="peek" role="menuitem" style="--a:4"><span aria-hidden="true">◉</span>Peek</button>
+    <button data-action="delete" role="menuitem" style="--a:5"><span aria-hidden="true">×</span>Remove</button>
+  </div>
+  <dialog id="tab-dialog" aria-labelledby="tab-dialog-title"><form id="tab-form">
+    <div class="dialog-top"><span class="eyebrow">GIVE AN IDEA A HOME</span><button type="button" class="icon close-dialog" aria-label="Close">×</button></div>
+    <h2 id="tab-dialog-title">Add a real browser tab</h2>
+    <label>Website address<input name="url" type="text" placeholder="https://example.com" required autocomplete="off" spellcheck="false"></label>
+    <label>Frame<select name="frame" id="frame-select"><option value="">Loose on canvas</option></select></label>
+    <p class="dialog-note">The page opens in Firefox and a card is added here.</p><p id="url-error" role="alert" hidden></p>
+    <button class="button primary" type="submit">Add to canvas</button>
+  </form></dialog>
+  <dialog id="guide" aria-labelledby="guide-title">
+    <div class="dialog-top"><span class="eyebrow">WELCOME TO ORBIT</span><button class="icon close-dialog" aria-label="Close">×</button></div>
+    <h2 id="guide-title">Follow your curiosity.</h2>
+    <div class="guide-grid">
+      <div><b>▣ Frames</b><p>Press F and draw a frame. Drag cards inside. Rename its heading, resize its corner, or move the heading to move the entire group. Open all its tabs with one click.</p></div>
+      <div><b>◉ Peek & compare</b><p>Card actions render real websites through Firefox. Peek keeps your canvas visible. Compare opens the card beside your active page.</p></div>
+      <div><b>⤳ Connections & notes</b><p>Press C, then choose two cards or notes. Double-click a line to remove it. Press N and click to place a note, then type into it.</p></div>
+      <div><b>✧ Gestures & keyboard</b><p>Right-click for the radial menu. Hold Space and drag to pan. Ctrl + scroll zooms. Arrow keys move a selected card. Delete removes it from the canvas. Ctrl + Z undoes a board change.</p></div>
+    </div>
+    <p class="dialog-note">Canvas removal keeps the browser tab open. Open tabs stay in Firefox’s native tab strip. Workspaces are saved in this browser profile; private windows keep them only for the session.</p>
+    <button class="button primary close-dialog">Start exploring</button>
+  </dialog>
+  <script src="orbit.js"></script>
+</body>
+</html>

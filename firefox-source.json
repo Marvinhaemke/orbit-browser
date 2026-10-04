@@ -1,0 +1,14 @@
+{
+  "repository": "https://github.com/mozilla-firefox/firefox.git",
+  "revision": "3f73c528a1ae5784ea5e1ee2c5ad3762507395f2",
+  "artifact_revision": "3f73c528a1ae5784ea5e1ee2c5ad3762507395f2",
+  "upstream_modified_files": {
+    "browser/components/BrowserComponents.manifest": "9a0202051288b7888825d13fa6e78aceef40931e",
+    "browser/components/moz.build": "9a955225780298c2d7cb1233e36b5b656c5c9050",
+    "browser/base/jar.mn": "b2b5db6040bfa4b0a6923b49669238191fcee1c4",
+    "browser/branding/unofficial/configure.sh": "f42e11ddad27285de8c58e4e48fa979119c37a72",
+    "browser/branding/unofficial/locales/en-US/brand.ftl": "5eaea9a7c4e874640464aff1c123ae3058d98302",
+    "browser/branding/unofficial/locales/en-US/brand.properties": "346c3bdb509bf70237d4a1a4a6cd613f33fbf830",
+    "browser/branding/unofficial/pref/firefox-branding.js": "f22dd0a51ccb367bbbb418d90aba6c8b6dbd7308"
+  }
+}

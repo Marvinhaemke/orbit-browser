@@ -1,0 +1,13 @@
+# Mozilla's compiled Gecko is reused; Orbit's native browser UI is rebuilt.
+ac_add_options --enable-project=browser
+ac_add_options --enable-artifact-builds
+ac_add_options --with-branding=browser/branding/unofficial
+ac_add_options --with-app-basename=Orbit
+ac_add_options --enable-update-channel=orbit-prototype
+mk_add_options MOZ_OBJDIR=@TOPSRCDIR@/obj-orbit
+mk_add_options AUTOCLOBBER=1
+
+# Keep the executable name firefox: artifact mode reuses upstream native binaries.
+# The app name, profile path, UI strings, and launcher identify Orbit separately.
+export MOZ_APP_PROFILE=Orbit/Prototype
+export MOZ_APP_REMOTINGNAME=orbit-prototype

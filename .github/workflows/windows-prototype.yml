@@ -1,0 +1,109 @@
+name: Windows native prototype
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: orbit-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Build and verify native Orbit (Windows x64)
+    runs-on: windows-2022
+    timeout-minutes: 120
+    env:
+      MOZILLABUILD: C:\mozilla-build
+      MOZ_AUTOMATION: '1'
+      MACH_HIDE_DEV_DRIVE_SUGGESTION: '1'
+      MACH_TELEMETRY_NO_SUBMIT: '1'
+      MOZBUILD_STATE_PATH: C:\orbit-mozbuild
+    steps:
+      - name: Check out Orbit source changes
+        uses: actions/checkout@v4
+
+      - name: Install Python for verification scripts
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Node for native interface checks
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Test source preparation guards
+        shell: pwsh
+        run: python -m unittest discover -s tests -v
+
+      - name: Check native interface and tab bridge behavior
+        shell: pwsh
+        run: |
+          node --check overlay/browser/components/orbit/Orbit.sys.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --check overlay/browser/base/content/orbit/orbit.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node tests/native-bridge.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Install official MozillaBuild tools
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installer = Join-Path $env:RUNNER_TEMP 'MozillaBuildSetup.exe'
+          Invoke-WebRequest 'https://ftp.mozilla.org/pub/mozilla/libraries/win32/MozillaBuildSetup-Latest.exe' -OutFile $installer
+          $process = Start-Process $installer -ArgumentList '/S', '/D=C:\mozilla-build' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "MozillaBuild installation failed: $($process.ExitCode)" }
+          if (-not (Test-Path 'C:\mozilla-build\msys2\usr\bin\bash.exe')) { throw 'MozillaBuild Bash is missing' }
+          if (-not (Test-Path 'C:\mozilla-build\python3\python.exe')) { throw 'MozillaBuild Python is missing' }
+          $version = [version](Get-Content 'C:\mozilla-build\VERSION' -Raw).Trim()
+          if ($version -lt [version]'4.0') { throw "Unsupported MozillaBuild version: $version" }
+          Write-Host "MozillaBuild $version"
+
+      - name: Build pinned Gecko with Orbit native UI
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $repo = $env:GITHUB_WORKSPACE.Replace('\', '/')
+          $script = "$repo/scripts/windows-build.sh"
+          & 'C:\mozilla-build\msys2\usr\bin\bash.exe' --noprofile --norc $script $repo C:/orbit-firefox
+          if ($LASTEXITCODE -ne 0) { throw "Orbit native build failed: $LASTEXITCODE" }
+
+      - name: Package native portable browser
+        shell: pwsh
+        run: python scripts/package_windows.py --source C:/orbit-firefox --output artifacts
+
+      - name: Install Marionette client from the pinned Firefox source
+        shell: pwsh
+        run: python -m pip install C:/orbit-firefox/testing/marionette/client
+
+      - name: Verify real native tabs and Orbit canvas in the packaged browser
+        shell: pwsh
+        run: python scripts/smoke_test.py --binary artifacts/Orbit/firefox.exe --report test-results/smoke.json
+
+      - name: Upload tested Windows browser
+        uses: actions/upload-artifact@v4
+        with:
+          name: Orbit-Windows-x64
+          path: |
+            artifacts/Orbit-Windows-x64-*.zip
+            artifacts/Orbit-Windows-x64-*.zip.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload verification and diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Orbit-Windows-diagnostics
+          path: |
+            test-results/
+            C:/orbit-firefox/obj-orbit/config.log
+          if-no-files-found: ignore
+          retention-days: 14
