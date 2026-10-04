@@ -6,6 +6,10 @@ This repository contains a small source overlay and guarded build scripts rather
 
 ## Windows prototype
 
+**[Download the tested Windows x64 prototype](https://github.com/Marvinhaemke/orbit-browser/actions/runs/37231460626/artifacts/11313827549)** · [Successful build and native test results](https://github.com/Marvinhaemke/orbit-browser/actions/runs/37231460626)
+
+This build passed nine checks inside the packaged browser: real Gecko rendering, native startup and toolbar registration, canvas loading, tab import and opening, frame opening without duplicates, SessionStore persistence, live previews, and native split views. Windows artifacts are retained for 14 days; the workflow can build a fresh package afterward.
+
 The [Windows prototype workflow](https://github.com/Marvinhaemke/orbit-browser/actions/workflows/windows-prototype.yml) runs on pushes to `main`, pull requests, and manual requests. A downloadable package is published as a workflow artifact **only after the built browser passes the native runtime smoke test**.
 
 After a successful run, download its `Orbit-Windows-x64` artifact. Extract that download, then extract the included `Orbit-Windows-x64-*.zip` browser package and run `Launch-Orbit.cmd` inside the `Orbit` folder. The launcher uses a dedicated Orbit profile. The native executable is `orbit.exe`, using Mozilla’s compiled Gecko engine with Orbit’s rebuilt browser interface.
