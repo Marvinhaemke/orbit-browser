@@ -105,7 +105,7 @@ class PackageGuardTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory)
             (folder / "browser").mkdir()
-            for name in ("firefox.exe", "xul.dll"):
+            for name in ("orbit.exe", "xul.dll"):
                 (folder / name).write_bytes(b"fixture")
             (folder / "application.ini").write_text("[App]\nName=Firefox\n", encoding="utf-8")
             for name in ("omni.ja", "browser/omni.ja"):

@@ -8,7 +8,7 @@ This repository contains a small source overlay and guarded build scripts rather
 
 The [Windows prototype workflow](https://github.com/Marvinhaemke/orbit-browser/actions/workflows/windows-prototype.yml) runs on pushes to `main`, pull requests, and manual requests. A downloadable package is published as a workflow artifact **only after the built browser passes the native runtime smoke test**.
 
-After a successful run, download its Windows artifact, extract it, and run `Launch-Orbit.cmd`. The launcher uses a dedicated Orbit profile. The runtime executable retains the filename `firefox.exe` because this prototype reuses Mozilla’s compiled Gecko artifacts.
+After a successful run, download its `Orbit-Windows-x64` artifact. Extract that download, then extract the included `Orbit-Windows-x64-*.zip` browser package and run `Launch-Orbit.cmd` inside the `Orbit` folder. The launcher uses a dedicated Orbit profile. The native executable is `orbit.exe`, using Mozilla’s compiled Gecko engine with Orbit’s rebuilt browser interface.
 
 Use the **Orbit canvas** toolbar button or **Alt + Shift + O** to open the workspace. Firefox’s normal toolbar and tab strip remain available.
 
@@ -35,7 +35,8 @@ python -m unittest discover -s tests -v
 python scripts/prepare_source.py --source C:/orbit-firefox
 python scripts/build.py --source C:/orbit-firefox
 python scripts/package_windows.py --source C:/orbit-firefox --output artifacts
-python scripts/smoke_test.py --binary artifacts/Orbit/firefox.exe --report test-results/smoke.json
+python -m pip install C:/orbit-firefox/testing/marionette/client
+python scripts/smoke_test.py --binary artifacts/Orbit/orbit.exe --report test-results/smoke.json
 ```
 
 `prepare_source.py` verifies the exact upstream revision and the original files before changing them. It refuses unexpected source changes. Repeating preparation on a matching checkout is supported.

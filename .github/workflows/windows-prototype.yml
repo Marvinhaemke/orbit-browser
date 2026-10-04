@@ -92,7 +92,7 @@ jobs:
 
       - name: Verify real native tabs and Orbit canvas in the packaged browser
         shell: pwsh
-        run: python scripts/smoke_test.py --binary artifacts/Orbit/firefox.exe --report test-results/smoke.json
+        run: python scripts/smoke_test.py --binary artifacts/Orbit/orbit.exe --report test-results/smoke.json
 
       - name: Upload tested Windows browser
         uses: actions/upload-artifact@v4
