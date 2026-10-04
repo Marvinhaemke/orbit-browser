@@ -6,6 +6,8 @@ This repository contains a small source overlay and guarded build scripts rather
 
 ## Windows prototype
 
+**[Download the verified toolbar-fix build](https://github.com/Marvinhaemke/orbit-browser/actions/runs/37236468606/artifacts/11316087113)** · [Native mouse, shortcut, and browser test results](https://github.com/Marvinhaemke/orbit-browser/actions/runs/37236468606)
+
 Download `Orbit-Windows-x64` from the latest successful [Windows build](https://github.com/Marvinhaemke/orbit-browser/actions/workflows/windows-prototype.yml).
 
 Runtime verification clicks the actual toolbar button, checks the icon and visible canvas, tests Alt+Shift+O, and captures a screenshot. It also checks real Gecko rendering, native tab import and opening, frame opening without duplicates, SessionStore persistence, live previews, and native split views. Windows artifacts are retained for 14 days; the workflow can build a fresh package afterward.
