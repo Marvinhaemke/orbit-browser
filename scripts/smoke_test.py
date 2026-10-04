@@ -107,10 +107,19 @@ def main() -> None:
             checks.append("Canvas imports metadata from real Firefox tabs")
 
             before = driver.execute_script('return gBrowser.tabs.length;')
+            handles_before = set(driver.window_handles)
             opened = driver.execute_script('return window.OrbitChrome.openTab({url: arguments[0]});', script_args=[url + "opened"])
             assert opened["id"] and driver.execute_script('return gBrowser.tabs.length;') == before + 1
+            deadline = time.monotonic() + 30
+            new_handles = set(driver.window_handles) - handles_before
+            while not new_handles and time.monotonic() < deadline:
+                time.sleep(0.2)
+                new_handles = set(driver.window_handles) - handles_before
+            assert len(new_handles) == 1, "Native tab opening did not create one browser handle"
+            driver.switch_to_window(new_handles.pop())
             driver.set_context("content")
             wait_for(driver, 'return !!document.getElementById("native-gecko-proof");', "new native tab's HTTP page")
+            assert driver.get_url() == url + "opened", "Automation did not reach the newly opened tab"
             driver.set_context("chrome")
             driver.execute_script('ChromeUtils.importESModule("moz-src:///browser/components/orbit/Orbit.sys.mjs").Orbit.openBoard(window);')
             checks.append("Canvas opens a real native tab and renders its page")

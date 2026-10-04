@@ -21,6 +21,7 @@ jobs:
     env:
       MOZILLABUILD: C:\mozilla-build
       MOZ_AUTOMATION: '1'
+      MACH_BUILD_PYTHON_NATIVE_PACKAGE_SOURCE: system
       MACH_HIDE_DEV_DRIVE_SUGGESTION: '1'
       MACH_TELEMETRY_NO_SUBMIT: '1'
       MOZBUILD_STATE_PATH: C:\orbit-mozbuild
@@ -65,6 +66,12 @@ jobs:
           $version = [version](Get-Content 'C:\mozilla-build\VERSION' -Raw).Trim()
           if ($version -lt [version]'4.0') { throw "Unsupported MozillaBuild version: $version" }
           Write-Host "MozillaBuild $version"
+
+      - name: Install native artifact decompression dependency
+        shell: pwsh
+        run: |
+          & 'C:\mozilla-build\python3\python.exe' -m pip install --only-binary=:all: 'zstandard==0.25.0'
+          if ($LASTEXITCODE -ne 0) { throw "Artifact dependency installation failed: $LASTEXITCODE" }
 
       - name: Build pinned Gecko with Orbit native UI
         shell: pwsh
