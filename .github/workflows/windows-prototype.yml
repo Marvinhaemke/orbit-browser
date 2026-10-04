@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: orbit-windows-${{ github.ref }}
@@ -42,6 +43,10 @@ jobs:
       - name: Test source preparation guards
         shell: pwsh
         run: python -m unittest discover -s tests -v
+
+      - name: Test Windows updater integrity and rollback
+        shell: powershell
+        run: ./scripts/test_update.ps1
 
       - name: Check native interface and tab bridge behavior
         shell: pwsh
@@ -94,6 +99,73 @@ jobs:
         shell: pwsh
         run: python scripts/smoke_test.py --binary artifacts/Orbit/orbit.exe --report test-results/smoke.json
 
+      - name: Package the lightweight interface update
+        shell: pwsh
+        run: python scripts/package_update.py --package artifacts/Orbit --output artifacts/update --commit $env:GITHUB_SHA
+
+      - name: Find an earlier tested browser to update
+        id: baseline
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const { data } = await github.rest.actions.listArtifactsForRepo({ owner, repo, per_page: 100 });
+            const previous = data.artifacts.find(artifact =>
+              artifact.name === 'Orbit-Windows-x64' && !artifact.expired &&
+              artifact.workflow_run?.head_branch === 'main');
+            core.setOutput('run_id', previous?.workflow_run.id || '');
+            if (previous) core.info(`Testing the installed browser from run ${previous.workflow_run.id}`);
+
+      - name: Download the previous browser inside CI
+        if: steps.baseline.outputs.run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: Orbit-Windows-x64
+          path: artifacts/Orbit-Update-Check
+          run-id: ${{ steps.baseline.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Apply the update to an existing native installation
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $previousPin = 'artifacts/Orbit-Update-Check/firefox-source.json'
+          if (Test-Path $previousPin) {
+            $old = Get-Content $previousPin -Raw | ConvertFrom-Json
+            $current = Get-Content firefox-source.json -Raw | ConvertFrom-Json
+            if ($old.revision -ne $current.revision -or $old.artifact_revision -ne $current.artifact_revision) {
+              Write-Host 'A new engine needs a complete browser; checking this engine installation instead.'
+              Remove-Item artifacts/Orbit-Update-Check -Recurse -Force
+            }
+          }
+          if (-not (Test-Path artifacts/Orbit-Update-Check/orbit.exe)) {
+            Copy-Item artifacts/Orbit artifacts/Orbit-Update-Check -Recurse
+          }
+          New-Item -ItemType Directory artifacts/Orbit-Update-Check/profile | Out-Null
+          Set-Content artifacts/Orbit-Update-Check/profile/update-preservation.txt 'Existing Orbit profile'
+          # Force actual replacement of both interface archives; keep the native engine.
+          Set-Content artifacts/Orbit-Update-Check/omni.ja 'Old interface archive'
+          Set-Content artifacts/Orbit-Update-Check/browser/omni.ja 'Old browser interface archive'
+          & ./scripts/windows/Update-Orbit.ps1 -InstallDirectory artifacts/Orbit-Update-Check -ManifestPath artifacts/update/orbit-update.json -ArchivePath artifacts/update/Orbit-UI-Update.zip -NoLaunch
+          if ($LASTEXITCODE -ne 0) { throw 'Offline interface update failed' }
+          if ((Get-Content artifacts/Orbit-Update-Check/profile/update-preservation.txt -Raw).Trim() -ne 'Existing Orbit profile') { throw 'Update changed the existing profile' }
+          if (-not (Test-Path artifacts/Orbit-Update-Check/browser/.purgecaches)) { throw 'Updated UI will not invalidate startup caches' }
+
+      - name: Verify the updated browser still renders Gecko and the canvas
+        shell: pwsh
+        run: |
+          python scripts/smoke_test.py --binary artifacts/Orbit-Update-Check/orbit.exe --report test-results/updated/smoke.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (Test-Path artifacts/Orbit-Update-Check/browser/.purgecaches) { throw 'Firefox did not consume the interface cache invalidation marker' }
+
+      - name: Upload tested lightweight update and setup
+        uses: actions/upload-artifact@v4
+        with:
+          name: Orbit-Windows-UI-Update
+          path: artifacts/update/
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Upload tested Windows browser
         uses: actions/upload-artifact@v4
         with:
@@ -124,3 +196,66 @@ jobs:
           path: test-results/
           if-no-files-found: ignore
           retention-days: 14
+
+  publish-update:
+    name: Publish tested prototype interface update
+    needs: windows
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: windows-2022
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified interface update
+        uses: actions/download-artifact@v4
+        with:
+          name: Orbit-Windows-UI-Update
+          path: update
+
+      - name: Download the verified browser for the online updater check
+        uses: actions/download-artifact@v4
+        with:
+          name: Orbit-Windows-x64
+          path: online-browser
+
+      - name: Publish the Windows prototype update channel
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ORBIT_COMMIT: ${{ github.sha }}
+        run: |
+          cat > release-notes.md <<'EOF'
+          Close Orbit, then run Update-Orbit.cmd to test the latest verified interface.
+
+          For an existing installation, download Orbit-Update-Setup.zip and extract its two files beside orbit.exe once. Future interface changes download only the small UI package; your existing profile and Gecko engine are kept.
+
+          Full browser downloads and native test results are available from the Windows prototype workflow. A new Gecko engine requires a complete browser download.
+          EOF
+          printf '\nVerified source commit: %s\n' "$ORBIT_COMMIT" >> release-notes.md
+          if ! gh release view windows-prototype >/dev/null 2>&1; then
+            gh release create windows-prototype --target "$ORBIT_COMMIT" --title 'Orbit Windows prototype updates' --prerelease --notes-file release-notes.md
+          fi
+          # Publish the manifest last. Mixed assets during publication fail hash checks.
+          gh release upload windows-prototype update/Orbit-UI-Update.zip update/Orbit-Update-Setup.zip --clobber
+          gh release upload windows-prototype update/orbit-update.json --clobber
+          gh release edit windows-prototype --title 'Orbit Windows prototype updates' --prerelease --notes-file release-notes.md
+
+      - name: Verify the actual public download and update flow
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory online-browser/profile | Out-Null
+          Set-Content online-browser/profile/update-preservation.txt 'Existing Orbit profile'
+          Set-Content online-browser/omni.ja 'Old interface archive'
+          Set-Content online-browser/browser/omni.ja 'Old browser interface archive'
+          & ./online-browser/Update-Orbit.ps1 -NoLaunch
+          if ($LASTEXITCODE -ne 0) { throw 'Public interface update failed' }
+          $manifest = Get-Content update/orbit-update.json -Raw | ConvertFrom-Json
+          foreach ($file in $manifest.files) {
+            $actual = (Get-FileHash (Join-Path online-browser $file.path) -Algorithm SHA256).Hash
+            if ($actual -ne $file.sha256) { throw 'Public download installed different interface files' }
+          }
+          if ((Get-Content online-browser/profile/update-preservation.txt -Raw).Trim() -ne 'Existing Orbit profile') { throw 'Public update changed the profile' }
+          # Rechecking a current installation must skip the UI ZIP download.
+          & ./online-browser/Update-Orbit.ps1 -NoLaunch
+          if ($LASTEXITCODE -ne 0) { throw 'Already-current update check failed' }

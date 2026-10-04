@@ -89,6 +89,8 @@ def main() -> None:
     (package / "distribution").mkdir(exist_ok=True)
     shutil.copy2(ROOT / "configs" / "policies.json", package / "distribution" / "policies.json")
     write_launcher(package)
+    for name in ("Update-Orbit.cmd", "Update-Orbit.ps1"):
+        shutil.copy2(ROOT / "scripts" / "windows" / name, package / name)
     (package / "START-HERE.txt").write_text(
         "Orbit Prototype — native Firefox frontend fork\n\n"
         "Extract this complete folder to a writable location. Run Launch-Orbit.cmd.\n"
@@ -97,8 +99,10 @@ def main() -> None:
         "The launcher uses a separate profile stored in this folder.\n"
         "Open the Orbit toolbar button or Alt+Shift+O to see the tab canvas.\n"
         "orbit.exe runs Gecko with Orbit's rebuilt native browser interface.\n"
-        "Automatic browser updates are disabled to preserve this fork. Obtain new\n"
-        "prototype builds from https://github.com/Marvinhaemke/orbit-browser/actions.\n"
+        "To test the latest interface: close Orbit, then run Update-Orbit.cmd.\n"
+        "It downloads the tested interface update and reopens the same profile.\n"
+        "If the Gecko engine changes, download a new complete browser instead.\n"
+        "Prototype downloads: https://github.com/Marvinhaemke/orbit-browser/releases/tag/windows-prototype\n"
         "Do not overwrite or reuse your normal Firefox profile.\n",
         encoding="utf-8",
     )

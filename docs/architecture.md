@@ -8,6 +8,14 @@
 
 The Windows pipeline bootstraps the supported Mozilla toolchain, rebuilds the frontend, packages the browser, then launches that browser with a disposable profile for a native runtime smoke test. It must pass before the downloadable artifact is uploaded.
 
+## Prototype interface updates
+
+`scripts/package_update.py` packages only `omni.ja` and `browser/omni.ja` from a verified native build. Its manifest records the source commit, exact upstream pin, payload hashes, and hashes of the unchanged native executables and DLLs. The application executable, engine, and profile are omitted from the update. Both `application.ini` and `platform.ini` stay with the installed application; their per-build identifiers are not used as engine fingerprints.
+
+The Windows PowerShell updater fetches the fixed repository’s `windows-prototype` prerelease assets. It validates the installed engine and staged files before replacing either archive, rejects unexpected ZIP paths, requires Orbit to be closed, and restores the previous archives on an installation failure. It saves the initial interface in `.orbit-update-backup`, records the installed UI commit, and adds `browser/.purgecaches`. Restarting with `-purgecaches` invalidates compiled interface caches while keeping the existing profile. An unchanged interface skips downloading the payload.
+
+CI tests the Windows updater, applies the bundle to a copy of the actual native package with different existing archives, checks profile preservation, and runs the native browser smoke test again. A separate job with release-write permission publishes the rolling prerelease only after all Windows checks pass. The manifest is uploaded after its payload; any mismatched assets during publication fail hash validation. Pull requests never publish the update channel. This prototype channel handles interface changes on a compatible engine; a Gecko upgrade requires a full browser package.
+
 ## Runtime
 
 `browser/components/orbit/Orbit.sys.mjs` is a privileged browser component loaded during Firefox’s delayed window startup. It manages the toolbar entry, keyboard shortcut, canvas lifecycle, and a narrow bridge to native browser operations.

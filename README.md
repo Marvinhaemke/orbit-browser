@@ -18,6 +18,16 @@ After a successful run, download its `Orbit-Windows-x64` artifact and extract it
 
 Use the **Orbit canvas** toolbar button or **Alt + Shift + O** to open the workspace. Firefox’s normal toolbar and tab strip remain available.
 
+## Test interface changes without downloading the whole browser
+
+For an existing Orbit installation, download [Orbit-Update-Setup.zip](https://github.com/Marvinhaemke/orbit-browser/releases/download/windows-prototype/Orbit-Update-Setup.zip) once and extract its two files beside `orbit.exe` and `Launch-Orbit.cmd`. New full browser packages already include these files.
+
+Close Orbit, then double-click **Update-Orbit.cmd**. It downloads the latest tested interface package, applies it to the existing installation, and reopens the same portable profile. Tabs, bookmarks, notes, and canvas layouts stay in that profile. No Git checkout, GitHub sign-in, or build tools are needed.
+
+The updater replaces the two packaged interface archives, verifies their hashes and the installed engine, keeps a backup, and clears Firefox’s compiled interface caches on restart. It refuses an incompatible engine or an update while Orbit is running. If Gecko changes, use a new full browser download instead.
+
+The [Windows prototype update channel](https://github.com/Marvinhaemke/orbit-browser/releases/tag/windows-prototype) is published only after the native browser passes runtime verification, the Windows updater passes integrity and rollback tests, and the updated installation passes the same native runtime checks. Only successful builds on `main` publish updates.
+
 The source implements:
 
 - A pan-and-zoom canvas populated from real browser tabs.
@@ -58,7 +68,7 @@ The runtime code uses Firefox’s platform-neutral browser APIs. The first packa
 - The radial menu currently applies to the canvas. Ordinary webpages retain Firefox’s native context menus.
 - Workspace persistence follows Firefox’s session restoration. Private workspaces are not written into session state.
 - Removing a canvas card does not close its browser tab.
-- Automatic Firefox application updates are disabled in the packaged prototype so an upstream update cannot replace Orbit’s modified interface. Update this prototype through a newly built Orbit package.
-- The prototype uses upstream unofficial artwork. Installer creation, code signing, update infrastructure, and release builds are future work.
+- Automatic Firefox application updates are disabled so an upstream update cannot replace Orbit’s modified interface. Orbit’s prototype updater delivers tested interface changes; engine upgrades need a full package.
+- The prototype uses upstream unofficial artwork. Installer creation, code signing, full engine updates, and release builds are future work.
 
 See [architecture](docs/architecture.md) for the integration points and [the source pin](firefox-source.json) for upstream provenance. New Orbit source is licensed under [MPL 2.0](LICENSE); Firefox retains its upstream and third-party licenses.
