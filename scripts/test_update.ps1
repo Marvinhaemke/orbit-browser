@@ -211,3 +211,6 @@ try {
     Write-Host "$Passed offline updater checks passed."
 }
 finally { if (Test-Path -LiteralPath $TestRoot) { Remove-Item -LiteralPath $TestRoot -Recurse -Force } }
+# Expected rejection cases run a child process with exit 1. Do not propagate
+# that child result after every assertion passed.
+exit 0
