@@ -31,6 +31,7 @@ function New-Fixture([string]$Name) {
     foreach ($relative in @('orbit.exe', 'xul.dll', 'gmp-clearkey/component.dll')) {
         Write-Utf8 (Join-Path $install $relative) ('unchanged native engine ' + $relative)
     }
+    Write-Utf8 (Join-Path $install 'uninstall/helper.exe') 'original NSIS uninstall utility'
     Write-Utf8 (Join-Path $install 'application.ini') "[App]`r`nName=Orbit`r`nBuildID=old-build`r`n"
     Write-Utf8 (Join-Path $install 'platform.ini') "[Build]`r`nBuildID=keep-this-platform-id`r`n"
     Write-Utf8 (Join-Path $install 'omni.ja') 'old root archive'
@@ -75,7 +76,7 @@ function Invoke-Update($Fixture) {
 }
 function Snapshot($Fixture) {
     $snapshot = @{}
-    foreach ($relative in @('orbit.exe', 'xul.dll', 'gmp-clearkey/component.dll', 'application.ini', 'platform.ini', 'omni.ja', 'browser/omni.ja', 'profile/prefs.js', 'profile/extensions/user-plugin.dll', 'orbit-ui-version.json', 'browser/.purgecaches')) {
+    foreach ($relative in @('orbit.exe', 'xul.dll', 'gmp-clearkey/component.dll', 'uninstall/helper.exe', 'application.ini', 'platform.ini', 'omni.ja', 'browser/omni.ja', 'profile/prefs.js', 'profile/extensions/user-plugin.dll', 'orbit-ui-version.json', 'browser/.purgecaches')) {
         $path = Join-Path $Fixture.install $relative
         $snapshot[$relative] = if (Test-Path -LiteralPath $path) { Digest $path } else { $null }
     }
@@ -99,6 +100,7 @@ try {
     Run-Case 'updates-only-UI-and-retains-first-backup' {
         param($fixture)
         $manifest = New-Update $fixture
+        Write-Utf8 (Join-Path $fixture.install 'uninstall/helper.exe') 'different NSIS utility from an older native package'
         $before = Snapshot $fixture
         $result = Invoke-Update $fixture
         Assert-True ($result.code -eq 0) $result.output
@@ -135,10 +137,20 @@ try {
     Run-Case 'extra-engine-file-is-rejected' {
         param($fixture)
         $null = New-Update $fixture
-        Write-Utf8 (Join-Path $fixture.install 'unexpected.dll') 'unlisted native binary'
+        Write-Utf8 (Join-Path $fixture.install 'helper.exe') 'root-level helper is still a native binary'
         $before = Snapshot $fixture
         $result = Invoke-Update $fixture
         Assert-True ($result.code -ne 0) 'Incomplete engine fingerprint was accepted.'
+        Assert-Unchanged $fixture $before
+    }
+    Run-Case 'uninstall-helper-cannot-enter-engine-manifest' {
+        param($fixture)
+        $manifest = New-Update $fixture
+        $manifest.engine_files += Record $fixture.install 'uninstall/helper.exe'
+        Save-Manifest $fixture $manifest
+        $before = Snapshot $fixture
+        $result = Invoke-Update $fixture
+        Assert-True ($result.code -ne 0) 'NSIS uninstall helper was accepted into the engine fingerprint.'
         Assert-Unchanged $fixture $before
     }
     Run-Case 'ZIP-traversal-cannot-touch-profile' {

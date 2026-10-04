@@ -100,7 +100,11 @@ function Get-InstalledEnginePaths([string]$Root) {
                 throw 'Orbit updates do not follow symbolic links or junctions.'
             }
             if ($item.PSIsContainer) { $queue.Enqueue($item.FullName) }
-            elseif ($item.Extension -match '^\.(exe|dll)$') { [void]$paths.Add($relative) }
+            elseif ($item.Extension -match '^\.(exe|dll)$' -and $relative -ine 'uninstall/helper.exe') {
+                # NSIS rebuilds this uninstall utility for each UI package.
+                # It is preserved in place and is not part of the Gecko engine.
+                [void]$paths.Add($relative)
+            }
         }
     }
     return ,$paths
@@ -203,7 +207,9 @@ function Read-UpdateManifest([string]$Path) {
     $engineRecords = @()
     foreach ($file in $engine) {
         $path = Get-RelativePath (Get-Property $file 'path')
-        if ($path -notmatch '\.(exe|dll)$' -or !$names.Add($path)) { throw 'Invalid native engine file list.' }
+        if ($path -notmatch '\.(exe|dll)$' -or $path -ieq 'uninstall/helper.exe' -or !$names.Add($path)) {
+            throw 'Invalid native engine file list.'
+        }
         $engineRecords += [pscustomobject]@{ path = $path; size = Get-Size (Get-Property $file 'size') 1GB; sha256 = Get-Digest (Get-Property $file 'sha256') }
     }
     if (!$names.Contains('orbit.exe') -or !$names.Contains('xul.dll')) { throw 'Update is missing its native engine fingerprint.' }

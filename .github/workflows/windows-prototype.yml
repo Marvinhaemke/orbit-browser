@@ -58,7 +58,53 @@ jobs:
           node tests/native-bridge.test.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Find a tested browser with matching native source
+        id: baseline
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const { owner, repo } = context.repo;
+            const { data } = await github.rest.actions.listArtifactsForRepo({ owner, repo, per_page: 100 });
+            const previous = data.artifacts.find(artifact =>
+              artifact.name === 'Orbit-Windows-x64' && !artifact.expired &&
+              artifact.workflow_run?.head_branch === 'main' &&
+              artifact.workflow_run?.head_repository_id === context.payload.repository.id);
+            core.setOutput('run_id', previous?.workflow_run.id || '');
+            core.setOutput('reuse', 'false');
+            if (!previous) return;
+            core.info(`Testing the installed browser from run ${previous.workflow_run.id}`);
+            const run = await github.rest.actions.getWorkflowRun({ owner, repo, run_id: previous.workflow_run.id });
+            if (run.data.conclusion !== 'success') return;
+            const comparison = await github.rest.repos.compareCommitsWithBasehead({
+              owner, repo, basehead: `${previous.workflow_run.head_sha}...${context.sha}`
+            });
+            const files = comparison.data.files;
+            if (!files || files.length >= 300 || !['ahead', 'identical'].includes(comparison.data.status)) return;
+            const nativeInput = /^(overlay\/|configs\/|firefox-source\.json$|scripts\/(build\.py|prepare_source\.py|windows-build\.sh)$)/;
+            if (files.some(file => nativeInput.test(file.filename) || nativeInput.test(file.previous_filename || ''))) return;
+            const prior = await github.rest.repos.getContent({
+              owner, repo, path: '.github/workflows/windows-prototype.yml', ref: previous.workflow_run.head_sha
+            });
+            const before = Buffer.from(prior.data.content, 'base64').toString('utf8').replace(/\r\n/g, '\n');
+            const current = fs.readFileSync('.github/workflows/windows-prototype.yml', 'utf8').replace(/\r\n/g, '\n');
+            const env = text => text.match(/\n    env:\n([\s\S]*?)\n    steps:/)?.[1];
+            const build = text => text.match(/^      - name: Build pinned Gecko with Orbit native UI\n[\s\S]*?        run: \|\n([\s\S]*?)(?=\n      - name:)/m)?.[1];
+            if (!env(before) || !build(before) || env(before) !== env(current) || build(before) !== build(current)) return;
+            core.setOutput('reuse', 'true');
+            core.info('Native source, configuration, build environment, and build command match the tested artifact.');
+
+      - name: Reuse the matching verified native browser
+        if: steps.baseline.outputs.reuse == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: Orbit-Windows-x64
+          path: C:/orbit-firefox/obj-orbit/dist/orbit
+          run-id: ${{ steps.baseline.outputs.run_id }}
+          github-token: ${{ github.token }}
+
       - name: Install official MozillaBuild tools
+        if: steps.baseline.outputs.reuse != 'true'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -73,12 +119,14 @@ jobs:
           Write-Host "MozillaBuild $version"
 
       - name: Install native artifact decompression dependency
+        if: steps.baseline.outputs.reuse != 'true'
         shell: pwsh
         run: |
           & 'C:\mozilla-build\python3\python.exe' -m pip install --only-binary=:all: 'zstandard==0.25.0'
           if ($LASTEXITCODE -ne 0) { throw "Artifact dependency installation failed: $LASTEXITCODE" }
 
       - name: Build pinned Gecko with Orbit native UI
+        if: steps.baseline.outputs.reuse != 'true'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -93,7 +141,31 @@ jobs:
 
       - name: Install Marionette client from the pinned Firefox source
         shell: pwsh
-        run: python -m pip install C:/orbit-firefox/testing/marionette/client
+        env:
+          ORBIT_REUSE_NATIVE: ${{ steps.baseline.outputs.reuse }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $clientSource = 'C:/orbit-firefox'
+          if ($env:ORBIT_REUSE_NATIVE -eq 'true') {
+            # Fetch only the exact pinned automation client, not the whole Firefox tree.
+            $clientSource = 'C:/orbit-marionette'
+            $pin = Get-Content firefox-source.json -Raw | ConvertFrom-Json
+            git init $clientSource
+            if ($LASTEXITCODE -ne 0) { throw 'Could not initialize the pinned test client checkout' }
+            git -C $clientSource config core.longpaths true
+            git -C $clientSource config core.autocrlf false
+            git -C $clientSource remote add origin $pin.repository
+            git -C $clientSource config remote.origin.promisor true
+            git -C $clientSource config remote.origin.partialclonefilter blob:none
+            git -C $clientSource sparse-checkout init --cone
+            git -C $clientSource sparse-checkout set testing/marionette/client
+            git -C $clientSource fetch --filter=blob:none --depth=1 origin $pin.revision
+            if ($LASTEXITCODE -ne 0) { throw 'Could not fetch the pinned test client' }
+            git -C $clientSource checkout --detach FETCH_HEAD
+            if ($LASTEXITCODE -ne 0) { throw 'Could not check out the pinned test client' }
+          }
+          python -m pip install "$clientSource/testing/marionette/client"
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned test client installation failed' }
 
       - name: Verify real native tabs and Orbit canvas in the packaged browser
         shell: pwsh
@@ -102,19 +174,6 @@ jobs:
       - name: Package the lightweight interface update
         shell: pwsh
         run: python scripts/package_update.py --package artifacts/Orbit --output artifacts/update --commit $env:GITHUB_SHA
-
-      - name: Find an earlier tested browser to update
-        id: baseline
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const { owner, repo } = context.repo;
-            const { data } = await github.rest.actions.listArtifactsForRepo({ owner, repo, per_page: 100 });
-            const previous = data.artifacts.find(artifact =>
-              artifact.name === 'Orbit-Windows-x64' && !artifact.expired &&
-              artifact.workflow_run?.head_branch === 'main');
-            core.setOutput('run_id', previous?.workflow_run.id || '');
-            if (previous) core.info(`Testing the installed browser from run ${previous.workflow_run.id}`);
 
       - name: Download the previous browser inside CI
         if: steps.baseline.outputs.run_id != ''

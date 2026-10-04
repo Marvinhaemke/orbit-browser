@@ -25,6 +25,9 @@ SETUP_PATHS = ("Update-Orbit.cmd", "Update-Orbit.ps1")
 UPDATE_NAME = "Orbit-UI-Update.zip"
 MANIFEST_NAME = "orbit-update.json"
 SETUP_NAME = "Orbit-Update-Setup.zip"
+# NSIS rebuilds this uninstall utility for each package. It is not runtime
+# engine code and remains installed unchanged during frontend updates.
+ENGINE_EXCLUSIONS = frozenset({"uninstall/helper.exe"})
 REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 
 
@@ -110,6 +113,7 @@ def build_update(package: Path, output: Path, commit: str, *, root: Path = ROOT)
     engine_paths = [
         path for path in native_files
         if path.suffix.casefold() in {".exe", ".dll"}
+        and path.relative_to(package).as_posix() not in ENGINE_EXCLUSIONS
     ]
     engine = [file_record(path, path.relative_to(package).as_posix()) for path in engine_paths]
     files = [file_record(package / path, path) for path in PAYLOAD_PATHS]

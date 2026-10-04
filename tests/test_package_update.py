@@ -26,6 +26,8 @@ class UpdatePackageTests(unittest.TestCase):
         self.output = self.base / "update"
         (self.root / "scripts/windows").mkdir(parents=True)
         (self.package / "browser").mkdir(parents=True)
+        (self.package / "uninstall").mkdir()
+        (self.package / "uninstall/helper.exe").write_bytes(b"per-build uninstall helper fixture")
         self.pin = {"revision": "a" * 40, "artifact_revision": "a" * 40}
         for directory in (self.root, self.package):
             (directory / "firefox-source.json").write_text(json.dumps(self.pin), encoding="utf-8")
@@ -108,6 +110,20 @@ class UpdatePackageTests(unittest.TestCase):
         self.assertEqual(original, rebuilt)
         self.assertNotIn("application.ini", [record["path"] for record in rebuilt])
         self.assertNotIn("platform.ini", [record["path"] for record in rebuilt])
+
+    def test_rebuilt_uninstall_helper_is_preserved_and_excluded_from_engine_fingerprint(self):
+        original = self.build()["engine_files"]
+        helper = self.package / "uninstall/helper.exe"
+        replacement = b"different NSIS uninstall helper from another frontend build"
+        helper.write_bytes(replacement)
+        rebuilt = self.build()["engine_files"]
+        self.assertEqual(original, rebuilt)
+        self.assertNotIn("uninstall/helper.exe", [record["path"] for record in rebuilt])
+        self.assertIn("extra.exe", [record["path"] for record in rebuilt])
+        with zipfile.ZipFile(self.output / update.UPDATE_NAME) as archive:
+            self.assertEqual(archive.namelist(), list(update.PAYLOAD_PATHS))
+            self.assertNotIn("uninstall/helper.exe", archive.namelist())
+        self.assertEqual(helper.read_bytes(), replacement)
 
     def test_personal_profile_is_rejected_before_engine_file_enumeration(self):
         profile = self.package / "profile"
