@@ -8,6 +8,6 @@ mk_add_options MOZ_OBJDIR=@TOPSRCDIR@/obj-orbit
 mk_add_options AUTOCLOBBER=1
 
 # Keep the executable name firefox: artifact mode reuses upstream native binaries.
-# The app name, profile path, UI strings, and launcher identify Orbit separately.
-export MOZ_APP_PROFILE=Orbit/Prototype
-export MOZ_APP_REMOTINGNAME=orbit-prototype
+# --with-app-basename and the explicit portable launcher isolate Orbit profiles.
+# MOZ_APP_PROFILE is an implied-only project flag at the pinned revision and
+# must not be exported from a mozconfig.

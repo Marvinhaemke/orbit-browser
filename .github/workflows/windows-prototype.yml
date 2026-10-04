@@ -97,13 +97,25 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Collect native build diagnostic logs
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path test-results | Out-Null
+          $logs = @{
+            'C:/orbit-firefox/obj-orbit/config.log' = 'test-results/config.log'
+            'C:/orbit-firefox/.mozconfig' = 'test-results/mozconfig.txt'
+            'C:/orbit-firefox/.orbit-source.json' = 'test-results/firefox-source.json'
+          }
+          foreach ($source in $logs.Keys) {
+            if (Test-Path $source) { Copy-Item -Path $source -Destination $logs[$source] -Force }
+          }
+
       - name: Upload verification and diagnostic logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: Orbit-Windows-diagnostics
-          path: |
-            test-results/
-            C:/orbit-firefox/obj-orbit/config.log
+          path: test-results/
           if-no-files-found: ignore
           retention-days: 14
