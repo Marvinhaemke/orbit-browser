@@ -19,10 +19,18 @@ let writes = 0;
 let reads = 0;
 const windows = new WeakMap();
 const tabs = new WeakMap();
+const browserWindows = new Set();
+let widgetProperties;
 const modules = {
   PrivateBrowsingUtils: { isWindowPrivate: win => win.private },
   ContextualIdentityService: { getPublicIdentityFromId: id => id === 2 ? { userContextId: 2 } : null },
-  CustomizableUI: { AREA_NAVBAR: "nav-bar", createWidget() {} },
+  CustomizableUI: {
+    AREA_NAVBAR: "nav-bar",
+    createWidget(properties) {
+      widgetProperties = properties;
+      for (const win of browserWindows) attachWidget(win);
+    },
+  },
   SessionStore: {
     getCustomWindowValue(win, key) { reads++; return windows.get(win)?.[key] || ""; },
     setCustomWindowValue(win, key, value) { writes++; windows.set(win, { ...windows.get(win), [key]: value }); },
@@ -54,7 +62,8 @@ class Node extends EventTarget {
   constructor(doc, tag = "div") {
     super();
     this.ownerDocument = doc;
-    this.ownerGlobal = doc.win;
+    // Matches the pinned Node WebIDL: documentGlobal exists, ownerGlobal does not.
+    this.documentGlobal = doc.defaultView;
     this.tagName = tag;
     this.style = {};
     this.attributes = {};
@@ -71,15 +80,26 @@ class Node extends EventTarget {
   focus() {}
 }
 
+function attachWidget(win) {
+  const node = new Node(win.document, "toolbarbutton");
+  node.id = widgetProperties.id;
+  widgetProperties.onCreated(node);
+  node.addEventListener("command", event => widgetProperties.onCommand(event));
+  return node;
+}
+
 function createWindow(isPrivate = false) {
   const win = new EventTarget();
   win.private = isPrivate;
   win.document = {
     win,
+    defaultView: win,
     nodes: new Map(),
     createElementNS(ns, tag) { return new Node(this, tag); },
     getElementById(id) { return this.nodes.get(id); },
   };
+  browserWindows.add(win);
+  if (widgetProperties) attachWidget(win);
   new Node(win.document).id = "browser";
   const nativeBrowser = url => ({ currentURI: uri(url), contentPrincipal: { isSystemPrincipal: false }, referrerInfo: {}, focus() {} });
   const first = { label: "Example", userContextId: 0, linkedBrowser: nativeBrowser("https://example.com/"), pinned: false };
@@ -127,6 +147,29 @@ const board = () => ({
   items: [{ id: "item-1", type: "tab", x: 20, y: 50, w: 248, h: 160, title: "Mozilla", url: "https://www.mozilla.org/", userContextId: 2, frameId: "frame-1" }],
   connections: [],
   strokes: [],
+});
+
+test("native toolbar command opens and closes the canvas in the button's own window", () => {
+  const win = createWindow();
+  Orbit.init(win);
+  const button = win.document.getElementById("orbit-canvas-button");
+  assert.equal(button.ownerGlobal, undefined, "the removed Gecko API must not exist in the test");
+  assert.equal(button.attributes.image, "chrome://browser/content/orbit/orbit.svg");
+  assert.equal(win.document.getElementById("orbit-canvas-overlay"), undefined);
+  button.dispatchEvent(new Event("command"));
+  assert.equal(win.document.getElementById("orbit-canvas-overlay").hidden, false);
+  assert.equal(button.attributes["aria-pressed"], "true");
+  button.dispatchEvent(new Event("command"));
+  assert.equal(win.document.getElementById("orbit-canvas-overlay").hidden, true);
+  assert.equal(button.attributes["aria-pressed"], "false");
+
+  const second = createWindow();
+  Orbit.init(second);
+  second.document.getElementById("orbit-canvas-button").dispatchEvent(new Event("command"));
+  assert.equal(second.document.getElementById("orbit-canvas-overlay").hidden, false);
+  assert.equal(win.document.getElementById("orbit-canvas-overlay").hidden, true);
+  Orbit.uninit(second);
+  Orbit.uninit(win);
 });
 
 test("board rejects privileged URL schemes, credentials, invalid geometry and dangling references", () => {

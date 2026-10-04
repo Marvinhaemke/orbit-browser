@@ -46,6 +46,7 @@ class SourceGuardTests(unittest.TestCase):
             "browser/base/content/orbit/orbit.html",
             "browser/base/content/orbit/orbit.css",
             "browser/base/content/orbit/orbit.js",
+            "browser/base/content/orbit/orbit.svg",
         ):
             destination = self.root / "overlay" / path
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -75,6 +76,7 @@ class SourceGuardTests(unittest.TestCase):
         self.assertEqual(manifest.count("Orbit.uninit"), 1)
         self.assertIn('    "orbit",', (self.source / "browser/components/moz.build").read_text(encoding="utf-8"))
         self.assertIn("content/browser/orbit/orbit.html", (self.source / "browser/base/jar.mn").read_text(encoding="utf-8"))
+        self.assertIn("content/browser/orbit/orbit.svg", (self.source / "browser/base/jar.mn").read_text(encoding="utf-8"))
 
     def test_upstream_drift_aborts_without_partial_writes(self):
         drift_path = "browser/base/jar.mn"
@@ -101,6 +103,60 @@ class SourceGuardTests(unittest.TestCase):
 
 
 class PackageGuardTests(unittest.TestCase):
+    def native_fixture(self, folder):
+        (folder / "browser").mkdir(parents=True)
+        for name in ("orbit.exe", "xul.dll"):
+            (folder / name).write_bytes(b"native-package-test-fixture")
+        (folder / "application.ini").write_text("[App]\nName=Orbit\n", encoding="utf-8")
+        with zipfile.ZipFile(folder / "omni.ja", "w") as archive:
+            archive.writestr("moz-src/browser/components/orbit/Orbit.sys.mjs", "fixture")
+        with zipfile.ZipFile(folder / "browser/omni.ja", "w") as archive:
+            for name in ("orbit.html", "orbit.css", "orbit.js", "orbit.svg"):
+                archive.writestr(f"chrome/browser/content/browser/orbit/{name}", "fixture")
+
+    def test_complete_download_has_launcher_next_to_executable_and_isolated_profile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source"
+            self.native_fixture(source / "obj-orbit/dist/orbit")
+            output = Path(directory) / "download"
+            with patch("sys.argv", ["package_windows.py", "--source", str(source), "--output", str(output)]):
+                package.main()
+            folder = output / "Orbit"
+            package.verify_launch_files(folder)
+            self.assertFalse((folder / "profile").exists(), "A personal browser profile must not be shipped")
+            archives = list(output.glob("Orbit-Windows-x64-*.zip"))
+            self.assertEqual(len(archives), 1)
+            package.verify_delivery_archive(archives[0])
+            extracted = Path(directory) / "extracted"
+            with zipfile.ZipFile(archives[0]) as archive:
+                archive.extractall(extracted)
+            package.verify_launch_files(extracted / "Orbit")
+            launcher = (extracted / "Orbit/Launch-Orbit.cmd").read_text(encoding="utf-8")
+            self.assertIn('mkdir "%~dp0profile"', launcher)
+            self.assertIn('-profile "%~dp0profile"', launcher)
+            self.assertIn('-no-remote', launcher)
+            self.assertNotIn("%APPDATA%", launcher)
+            policies = json.loads((extracted / "Orbit/distribution/policies.json").read_text(encoding="utf-8"))
+            self.assertIs(policies["policies"]["DisableAppUpdate"], True)
+
+    def test_archive_without_launcher_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            zip_path = Path(directory) / "incomplete.zip"
+            with zipfile.ZipFile(zip_path, "w") as archive:
+                archive.writestr("Orbit/orbit.exe", "native-package-test-fixture")
+                archive.writestr("Orbit/START-HERE.txt", "fixture")
+            with self.assertRaisesRegex(ValueError, "missing Orbit/Launch-Orbit.cmd"):
+                package.verify_delivery_archive(zip_path)
+
+    def test_launcher_target_and_profile_cannot_fall_back_to_system_firefox(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            (folder / "orbit.exe").write_bytes(b"native-package-test-fixture")
+            (folder / "START-HERE.txt").write_text("fixture", encoding="utf-8")
+            (folder / "Launch-Orbit.cmd").write_text('start "" firefox.exe\n', encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "adjacent executable.*isolated portable profile"):
+                package.verify_launch_files(folder)
+
     def test_unmodified_firefox_distribution_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory)

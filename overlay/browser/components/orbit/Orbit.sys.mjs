@@ -727,12 +727,17 @@ export const Orbit = {
         tooltiptext: "Orbit canvas (Alt+Shift+O)",
         showInPrivateBrowsing: true,
         onCreated(node) {
-          const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><g fill="none" stroke="context-fill" stroke-width="1.8"><ellipse cx="12" cy="12" rx="10" ry="5" transform="rotate(-35 12 12)"/><circle cx="12" cy="12" r="3"/></g></svg>';
-          node.style.listStyleImage = `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+          // MozToolbarbutton maps image to its native icon's src attribute.
+          // Gecko blocks SVG context paint in data: images; chrome: preserves
+          // the themed icon in the toolbar, overflow menu, and customization.
+          node.setAttribute("image", "chrome://browser/content/orbit/orbit.svg");
           node.setAttribute("aria-pressed", "false");
         },
         onCommand(event) {
-          Orbit.toggleBoard(event.target.ownerGlobal);
+          // ownerGlobal was removed from Gecko's Node WebIDL. Resolve the
+          // actual command's window through the standard DOM document instead.
+          const node = event.currentTarget || event.target;
+          Orbit.toggleBoard(node.ownerDocument.defaultView);
         },
       });
       this._widgetCreated = true;

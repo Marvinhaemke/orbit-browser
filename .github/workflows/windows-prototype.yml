@@ -98,9 +98,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Orbit-Windows-x64
-          path: |
-            artifacts/Orbit-Windows-x64-*.zip
-            artifacts/Orbit-Windows-x64-*.zip.sha256
+          path: artifacts/Orbit/
           if-no-files-found: error
           retention-days: 14
 

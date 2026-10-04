@@ -17,6 +17,8 @@ import time
 import traceback
 
 from marionette_driver.marionette import Marionette
+from marionette_driver.by import By
+from marionette_driver.keys import Keys
 
 
 class FixturePage(BaseHTTPRequestHandler):
@@ -44,6 +46,43 @@ def wait_for(driver, script: str, label: str, timeout: float = 30):
             return result
         time.sleep(0.2)
     raise AssertionError(f"Timed out waiting for {label}")
+
+
+def click_canvas_button(driver):
+    button = driver.find_element(By.ID, "orbit-canvas-button")
+    try:
+        driver.actions.sequence("pointer", "orbit-toolbar-mouse", {"pointerType": "mouse"}).click(button).perform()
+    finally:
+        driver.actions.release()
+
+
+def canvas_shortcut(driver):
+    try:
+        driver.actions.sequence("key", "orbit-hotkey").key_down(Keys.ALT).key_down(Keys.SHIFT).key_down("o").key_up("o").key_up(Keys.SHIFT).key_up(Keys.ALT).perform()
+    finally:
+        driver.actions.release()
+
+
+def canvas_visible(driver):
+    return driver.execute_script('''
+        const overlay = document.getElementById("orbit-canvas-overlay");
+        const frame = document.getElementById("orbit-canvas-frame");
+        const viewport = frame?.contentDocument?.getElementById("viewport");
+        const bounds = viewport?.getBoundingClientRect();
+        return !!overlay && !overlay.hidden && bounds?.width > 400 && bounds?.height > 250;
+    ''')
+
+
+def open_canvas(driver):
+    if not canvas_visible(driver):
+        click_canvas_button(driver)
+        wait_for(driver, '''
+            const overlay = document.getElementById("orbit-canvas-overlay");
+            const frame = document.getElementById("orbit-canvas-frame");
+            const viewport = frame?.contentDocument?.getElementById("viewport");
+            const bounds = viewport?.getBoundingClientRect();
+            return !!overlay && !overlay.hidden && bounds?.width > 400 && bounds?.height > 250;
+        ''', "toolbar opens a visible canvas")
 
 
 def main() -> None:
@@ -91,7 +130,7 @@ def main() -> None:
             assert native["splitEnabled"], "Native split view preference is disabled"
             checks.append("Native Orbit startup, toolbar registration, and update policy")
 
-            driver.execute_script('ChromeUtils.importESModule("moz-src:///browser/components/orbit/Orbit.sys.mjs").Orbit.openBoard(window);')
+            open_canvas(driver)
             board = wait_for(driver, '''
                 const frame = document.getElementById("orbit-canvas-frame");
                 const doc = frame?.contentDocument;
@@ -102,9 +141,35 @@ def main() -> None:
             assert driver.execute_script('return document.getElementById("orbit-canvas-frame").contentDocument.nodePrincipal.isSystemPrincipal;')
             checks.append("Packaged privileged canvas HTML, CSS, and JavaScript loaded")
 
+            icon = driver.execute_script('''
+                const button = document.getElementById("orbit-canvas-button");
+                const image = button.querySelector(".toolbarbutton-icon");
+                const bounds = image?.getBoundingClientRect();
+                return {
+                    image: button.getAttribute("image"), src: image?.getAttribute("src"),
+                    width: bounds?.width, height: bounds?.height, pressed: button.getAttribute("aria-pressed")
+                };
+            ''')
+            assert icon["image"] == "chrome://browser/content/orbit/orbit.svg", icon
+            assert icon["src"] == icon["image"] and icon["width"] > 0 and icon["height"] > 0, icon
+            assert icon["pressed"] == "true", icon
+            checks.append("Physical toolbar click opens a visible canvas with its packaged icon")
+            click_canvas_button(driver)
+            wait_for(driver, 'return document.getElementById("orbit-canvas-overlay").hidden;', "toolbar closes the canvas")
+            canvas_shortcut(driver)
+            wait_for(driver, 'return !document.getElementById("orbit-canvas-overlay").hidden;', "Alt+Shift+O opens the canvas")
+            assert canvas_visible(driver)
+            canvas_shortcut(driver)
+            wait_for(driver, 'return document.getElementById("orbit-canvas-overlay").hidden;', "Alt+Shift+O closes the canvas")
+            open_canvas(driver)
+            checks.append("Toolbar and keyboard shortcut both open and close the canvas")
+
             driver.execute_script('document.getElementById("orbit-canvas-frame").contentDocument.getElementById("import-tabs").click();')
             wait_for(driver, 'return window.OrbitChrome.getBoard()?.items.some(item => item.type === "tab" && item.url === arguments[0]);'.replace("arguments[0]", json.dumps(url)), "real tabs imported into canvas")
             checks.append("Canvas imports metadata from real Firefox tabs")
+            wait_for(driver, 'return !!document.getElementById("orbit-canvas-frame").contentDocument.querySelector(".item.card");', "imported tab card is rendered")
+            (report.parent / "orbit-canvas.png").write_bytes(driver.screenshot(format="binary", full=False))
+            result["canvas_screenshot"] = "orbit-canvas.png"
 
             before = driver.execute_script('return gBrowser.tabs.length;')
             handles_before = set(driver.window_handles)
@@ -121,7 +186,7 @@ def main() -> None:
             wait_for(driver, 'return !!document.getElementById("native-gecko-proof");', "new native tab's HTTP page")
             assert driver.get_url() == url + "opened", "Automation did not reach the newly opened tab"
             driver.set_context("chrome")
-            driver.execute_script('ChromeUtils.importESModule("moz-src:///browser/components/orbit/Orbit.sys.mjs").Orbit.openBoard(window);')
+            open_canvas(driver)
             checks.append("Canvas opens a real native tab and renders its page")
 
             tabs = driver.execute_script('return window.OrbitChrome.listTabs();')
@@ -150,7 +215,8 @@ def main() -> None:
             assert "A native saved note" in persisted and "smoke-connection" in persisted and "smoke-stroke" in persisted
             checks.append("Notes, connections, frames, and drawings persist through native SessionStore")
 
-            driver.execute_script('ChromeUtils.importESModule("moz-src:///browser/components/orbit/Orbit.sys.mjs").Orbit.openBoard(window); window.OrbitChrome.peek({url: arguments[0]});', script_args=[url + "peek"])
+            open_canvas(driver)
+            driver.execute_script('window.OrbitChrome.peek({url: arguments[0]});', script_args=[url + "peek"])
             wait_for(driver, 'return document.getElementById("orbit-peek-browser")?.currentURI.spec === arguments[0];'.replace("arguments[0]", json.dumps(url + "peek")), "native Gecko link preview")
             assert driver.execute_script('return document.getElementById("orbit-peek-browser").getAttribute("type");') == "content"
             driver.execute_script('window.OrbitChrome.closePeek();')

@@ -6,13 +6,13 @@ This repository contains a small source overlay and guarded build scripts rather
 
 ## Windows prototype
 
-**[Download the tested Windows x64 prototype](https://github.com/Marvinhaemke/orbit-browser/actions/runs/37231460626/artifacts/11313827549)** · [Successful build and native test results](https://github.com/Marvinhaemke/orbit-browser/actions/runs/37231460626)
+Download `Orbit-Windows-x64` from the latest successful [Windows build](https://github.com/Marvinhaemke/orbit-browser/actions/workflows/windows-prototype.yml).
 
-This build passed nine checks inside the packaged browser: real Gecko rendering, native startup and toolbar registration, canvas loading, tab import and opening, frame opening without duplicates, SessionStore persistence, live previews, and native split views. Windows artifacts are retained for 14 days; the workflow can build a fresh package afterward.
+Runtime verification clicks the actual toolbar button, checks the icon and visible canvas, tests Alt+Shift+O, and captures a screenshot. It also checks real Gecko rendering, native tab import and opening, frame opening without duplicates, SessionStore persistence, live previews, and native split views. Windows artifacts are retained for 14 days; the workflow can build a fresh package afterward.
 
 The [Windows prototype workflow](https://github.com/Marvinhaemke/orbit-browser/actions/workflows/windows-prototype.yml) runs on pushes to `main`, pull requests, and manual requests. A downloadable package is published as a workflow artifact **only after the built browser passes the native runtime smoke test**.
 
-After a successful run, download its `Orbit-Windows-x64` artifact. Extract that download, then extract the included `Orbit-Windows-x64-*.zip` browser package and run `Launch-Orbit.cmd` inside the `Orbit` folder. The launcher uses a dedicated Orbit profile. The native executable is `orbit.exe`, using Mozilla’s compiled Gecko engine with Orbit’s rebuilt browser interface.
+After a successful run, download its `Orbit-Windows-x64` artifact and extract it once to a writable folder. Run `Launch-Orbit.cmd` beside `orbit.exe` and `START-HERE.txt`. Windows may show the launcher as **Launch-Orbit** when file extensions are hidden. The launcher uses a dedicated Orbit profile. The native executable is `orbit.exe`, using Mozilla’s compiled Gecko engine with Orbit’s rebuilt browser interface.
 
 Use the **Orbit canvas** toolbar button or **Alt + Shift + O** to open the workspace. Firefox’s normal toolbar and tab strip remain available.
 
