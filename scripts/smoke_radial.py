@@ -767,6 +767,10 @@ def run_checks(driver, handle, url, result, folder):
     held_tabs(driver, handle)
     group = find_item(driver, lambda item: "Orbit Native Group 10" in item["label"], "native group for blank fan release")
     hover_node(driver, group["id"])
+    wait_for(driver, '''
+        return [...document.getElementById(arguments[0]).querySelectorAll("[data-orbit-id]")]
+            .some(node => node.textContent.includes("group-10-tab-"));
+    ''', "native group fan opens before testing its blank arc", [ROOT_ID])
     leaf = find_item(driver, lambda item: "group-10-tab-12" in item["label"], "nested leaf before blank fan release")
     hover_node(driver, leaf["id"])
     settle_radial(driver)
