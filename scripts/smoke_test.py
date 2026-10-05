@@ -303,20 +303,30 @@ def verify_native_newtab_ux(driver, fixture_handle, url, result, folder):
             const viewport = doc.getElementById("viewport");
             const native = getComputedStyle(root);
             const canvas = doc.defaultView.getComputedStyle(doc.documentElement);
+            const expectedDark = arguments[0];
+            const expectedBase = expectedDark ? "#151b2c" : "#e9eef5";
+            const chromeBase = native.getPropertyValue("--orbit-chrome-base").trim();
+            const canvasBase = canvas.getPropertyValue("--orbit-base").trim();
+            // The native theme notification invalidates CSS after matchMedia
+            // changes. Wait for both real documents' painted palette tokens;
+            // an immediately sampled MQL can otherwise label light CSS dark.
+            if (window.matchMedia("(prefers-color-scheme: dark)").matches !== expectedDark ||
+                doc.defaultView.matchMedia("(prefers-color-scheme: dark)").matches !== expectedDark ||
+                chromeBase !== expectedBase || canvasBase !== expectedBase) return false;
             const urlbarNode = document.querySelector("#urlbar .urlbar-background");
             if (!urlbarNode) throw new Error("Pinned Firefox URL-bar background is missing");
             const urlbar = getComputedStyle(urlbarNode);
             return root.dataset.orbitTheme === "default" && box?.width > 0 && box?.height > 0 && {
-                chromeBase: native.getPropertyValue("--orbit-chrome-base").trim(),
+                chromeBase,
                 chromeInk: native.getPropertyValue("--orbit-chrome-ink").trim(),
-                canvasBase: canvas.getPropertyValue("--orbit-base").trim(),
+                canvasBase,
                 canvasInk: canvas.getPropertyValue("--ink").trim(),
                 canvasBackground: doc.defaultView.getComputedStyle(viewport).backgroundColor,
                 toolbox: getComputedStyle(document.getElementById("navigator-toolbox")).backgroundImage,
                 urlbarShadow: urlbar.boxShadow,
                 logoWidth: box.width, logoHeight: box.height,
                 title: doc.title, wordmark: doc.querySelector(".wordmark").textContent.trim()};
-        ''', "native Orbit chrome palette, sculpted surfaces, and packaged canvas logo")
+        '''.replace("arguments[0]", json.dumps(dark)), "settled native Orbit chrome/canvas palette, sculpted surfaces, and packaged logo")
         assert palette["chromeBase"] and palette["chromeInk"] and palette["canvasBase"], palette
         assert palette["chromeBase"] != palette["chromeInk"], palette
         assert palette["toolbox"] != "none" and palette["urlbarShadow"] != "none", palette
