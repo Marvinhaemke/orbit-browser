@@ -474,7 +474,9 @@ jobs:
           Set-Content online-browser/profile/update-preservation.txt 'Existing Orbit profile'
           Set-Content online-browser/omni.ja 'Old interface archive'
           Set-Content online-browser/browser/omni.ja 'Old browser interface archive'
-          & ./online-browser/Update-Orbit.ps1 -NoLaunch
+          # Exercise the user's CMD launcher and its child powershell.exe -File.
+          # Closed stdin prevents an error pause from hanging verification.
+          & $env:ComSpec /d /c 'online-browser\Update-Orbit.cmd -NoLaunch < NUL'
           if ($LASTEXITCODE -ne 0) { throw 'Public interface update failed' }
           $manifest = Get-Content update/orbit-update.json -Raw | ConvertFrom-Json
           foreach ($file in $manifest.files) {
@@ -483,5 +485,5 @@ jobs:
           }
           if ((Get-Content online-browser/profile/update-preservation.txt -Raw).Trim() -ne 'Existing Orbit profile') { throw 'Public update changed the profile' }
           # Rechecking a current installation must skip the UI ZIP download.
-          & ./online-browser/Update-Orbit.ps1 -NoLaunch
+          & $env:ComSpec /d /c 'online-browser\Update-Orbit.cmd -NoLaunch < NUL'
           if ($LASTEXITCODE -ne 0) { throw 'Already-current update check failed' }

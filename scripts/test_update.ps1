@@ -8,6 +8,7 @@ if ($PSVersionTable.PSVersion.Major -ne 5) { throw 'Run these updater checks wit
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $Updater = Join-Path $PSScriptRoot 'windows/Update-Orbit.ps1'
+$Launcher = Join-Path $PSScriptRoot 'windows/Update-Orbit.cmd'
 $PowerShellExe = Join-Path $PSHOME 'powershell.exe'
 $Pin = '3f73c528a1ae5784ea5e1ee2c5ad3762507395f2'
 $TestRoot = Join-Path ([IO.Path]::GetTempPath()) ('orbit-updater-tests-' + [Guid]::NewGuid().ToString('N'))
@@ -25,9 +26,9 @@ function Record([string]$Root, [string]$Relative) {
     $path = Join-Path $Root $Relative
     return [ordered]@{ path = $Relative; sha256 = Digest $path; size = (Get-Item -LiteralPath $path).Length }
 }
-function New-Fixture([string]$Name) {
+function New-Fixture([string]$Name, [string]$InstallName = 'Orbit installation with spaces') {
     $case = Join-Path $TestRoot $Name
-    $install = Join-Path $case 'Orbit installation with spaces'
+    $install = Join-Path $case $InstallName
     foreach ($relative in @('orbit.exe', 'xul.dll', 'gmp-clearkey/component.dll')) {
         Write-Utf8 (Join-Path $install $relative) ('unchanged native engine ' + $relative)
     }
@@ -74,6 +75,59 @@ function Invoke-Update($Fixture) {
     $output = & $PowerShellExe -NoProfile -ExecutionPolicy Bypass -File $Updater -InstallDirectory $Fixture.install -ManifestPath $Fixture.manifest -ArchivePath $Fixture.archive -NoLaunch 2>&1
     return [pscustomobject]@{ code = $LASTEXITCODE; output = ($output -join "`n") }
 }
+function Copy-Launchers($Fixture) {
+    Copy-Item -LiteralPath $Updater -Destination (Join-Path $Fixture.install 'Update-Orbit.ps1')
+    Copy-Item -LiteralPath $Launcher -Destination (Join-Path $Fixture.install 'Update-Orbit.cmd')
+}
+function Invoke-CopiedScript($Fixture, [string]$WorkingDirectory) {
+    Push-Location -LiteralPath $WorkingDirectory
+    try {
+        # Exercise the real powershell.exe -File scope, where a parameter
+        # default referring to $PSScriptRoot was empty on Windows PowerShell 5.1.
+        $script = Join-Path $Fixture.install 'Update-Orbit.ps1'
+        $output = & $PowerShellExe -NoProfile -ExecutionPolicy Bypass -File $script -ManifestPath $Fixture.manifest -ArchivePath $Fixture.archive -NoLaunch 2>&1
+        return [pscustomobject]@{ code = $LASTEXITCODE; output = ($output -join "`n") }
+    }
+    finally { Pop-Location }
+}
+function Invoke-CopiedLauncher($Fixture, [string]$WorkingDirectory) {
+    $start = New-Object Diagnostics.ProcessStartInfo
+    $start.FileName = $env:ComSpec
+    # cmd /s /c needs an outer pair of quotes around a quoted command path.
+    # All fixture paths are quoted so spaces, '&', and parentheses stay literal.
+    $start.Arguments = '/d /s /c ""' + (Join-Path $Fixture.install 'Update-Orbit.cmd') + '" -ManifestPath "' + $Fixture.manifest + '" -ArchivePath "' + $Fixture.archive + '" -NoLaunch"'
+    $start.WorkingDirectory = $WorkingDirectory
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $start.RedirectStandardInput = $true
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    $process = New-Object Diagnostics.Process
+    $process.StartInfo = $start
+    try {
+        [void]$process.Start()
+        # EOF makes the launcher's error-path pause noninteractive in CI.
+        $process.StandardInput.Close()
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        if (!$process.WaitForExit(30000)) {
+            $process.Kill()
+            throw 'Update-Orbit.cmd did not exit within 30 seconds.'
+        }
+        $process.WaitForExit()
+        return [pscustomobject]@{ code = $process.ExitCode; output = $stdout.Result + $stderr.Result }
+    }
+    finally { $process.Dispose() }
+}
+function Assert-Applied($Fixture, $Manifest, $Before) {
+    Assert-Unchanged $Fixture $Before @('omni.ja', 'browser/omni.ja', 'orbit-ui-version.json', 'browser/.purgecaches')
+    foreach ($file in $Manifest.files) {
+        Assert-True ((Digest (Join-Path $Fixture.install $file.path)) -eq $file.sha256) 'The launcher did not update the installation beside its script.'
+        Assert-True ((Digest (Join-Path $Fixture.install ('.orbit-update-backup/files/' + $file.path))) -eq $Before[$file.path]) 'The launcher did not preserve the original UI backup.'
+    }
+    $version = [IO.File]::ReadAllText((Join-Path $Fixture.install 'orbit-ui-version.json')) | ConvertFrom-Json
+    Assert-True ($version.commit -eq $Manifest.commit) 'The launcher did not record the applied source commit.'
+}
 function Snapshot($Fixture) {
     $snapshot = @{}
     foreach ($relative in @('orbit.exe', 'xul.dll', 'gmp-clearkey/component.dll', 'uninstall/helper.exe', 'application.ini', 'platform.ini', 'omni.ja', 'browser/omni.ja', 'profile/prefs.js', 'profile/extensions/user-plugin.dll', 'orbit-ui-version.json', 'browser/.purgecaches')) {
@@ -90,13 +144,47 @@ function Assert-Unchanged($Fixture, $Before, [string[]]$Except = @()) {
     $stages = @(Get-ChildItem -LiteralPath $Fixture.install -Force | Where-Object { $_.Name -like '.orbit-update-stage-*' -or $_.Name -eq '.orbit-update.lock' })
     Assert-True ($stages.Count -eq 0) 'Updater left temporary files or its lock behind.'
 }
-function Run-Case([string]$Name, [scriptblock]$Action) {
-    $fixture = New-Fixture $Name
+function Run-Case([string]$Name, [scriptblock]$Action, [string]$InstallName = 'Orbit installation with spaces') {
+    $fixture = New-Fixture $Name $InstallName
     try { & $Action $fixture; $script:Passed++; Write-Host "PASS $Name" }
     catch { throw "$Name failed: $($_.Exception.Message)" }
 }
 
 try {
+    Run-Case 'copied-PS1-resolves-installation-without-explicit-directory' {
+        param($fixture)
+        Copy-Launchers $fixture
+        $manifest = New-Update $fixture
+        $before = Snapshot $fixture
+        $working = New-Fixture 'copied-PS1-unrelated-working-directory'
+        $workingBefore = Snapshot $working
+        $result = Invoke-CopiedScript $fixture $working.install
+        Assert-True ($result.code -eq 0) $result.output
+        Assert-Applied $fixture $manifest $before
+        Assert-Unchanged $working $workingBefore
+        $same = Snapshot $fixture
+        $result = Invoke-CopiedScript $fixture $working.install
+        Assert-True ($result.code -eq 0 -and $result.output -like '*already up to date*') $result.output
+        Assert-Unchanged $fixture $same
+        Assert-Unchanged $working $workingBefore
+    } ('Orbit ' + [char]0x00FC + ' with spaces & (notes)')
+    Run-Case 'CMD-launcher-resolves-installation-from-other-working-directory' {
+        param($fixture)
+        Copy-Launchers $fixture
+        $manifest = New-Update $fixture
+        $before = Snapshot $fixture
+        $working = New-Fixture 'CMD-unrelated-working-directory'
+        $workingBefore = Snapshot $working
+        $result = Invoke-CopiedLauncher $fixture $working.install
+        Assert-True ($result.code -eq 0) $result.output
+        Assert-Applied $fixture $manifest $before
+        Assert-Unchanged $working $workingBefore
+        $same = Snapshot $fixture
+        $result = Invoke-CopiedLauncher $fixture $working.install
+        Assert-True ($result.code -eq 0 -and $result.output -like '*already up to date*') $result.output
+        Assert-Unchanged $fixture $same
+        Assert-Unchanged $working $workingBefore
+    } ('Orbit ' + [char]0x00FC + ' with spaces & (notes)')
     Run-Case 'updates-only-UI-and-retains-first-backup' {
         param($fixture)
         $manifest = New-Update $fixture

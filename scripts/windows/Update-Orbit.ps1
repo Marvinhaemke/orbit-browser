@@ -2,7 +2,7 @@
 # Updates the two UI archives of the pinned native Windows Orbit prototype.
 [CmdletBinding()]
 param(
-    [string]$InstallDirectory = $PSScriptRoot,
+    [string]$InstallDirectory,
     [string]$ManifestPath,
     [string]$ArchivePath,
     [switch]$NoLaunch
@@ -279,6 +279,12 @@ $preserveStage = $false
 $success = $false
 $root = $null
 try {
+    # Resolve the script directory at execution time. Windows PowerShell's
+    # -File parameter binding can evaluate defaults before PSScriptRoot is set.
+    if (!$PSBoundParameters.ContainsKey('InstallDirectory')) { $InstallDirectory = $PSScriptRoot }
+    if ([string]::IsNullOrWhiteSpace($InstallDirectory)) {
+        throw 'The Orbit installation folder could not be determined. Put both updater files beside orbit.exe, or pass -InstallDirectory.'
+    }
     if ([bool]$ManifestPath -ne [bool]$ArchivePath) { throw 'Use both -ManifestPath and -ArchivePath for a local update.' }
     $offline = [bool]$ManifestPath
     $resolved = Resolve-Path -LiteralPath $InstallDirectory
