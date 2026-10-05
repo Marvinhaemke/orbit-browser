@@ -361,7 +361,10 @@ def verify_native_newtab_ux(driver, fixture_handle, url, result, folder):
         return ChromeUtils.importESModule("moz-src:///browser/components/sessionstore/SessionStore.sys.mjs")
             .SessionStore.getCustomWindowValue(window, "orbit-board-v1");
     '''), "Private canvas wrote its board into persistent native SessionStore"
-    chord(driver, Keys.CONTROL, Keys.SHIFT, "w")
+    # Closing a chrome window on the shortcut's keydown destroys Marionette's
+    # action context before it can dispatch keyups. Use its native window-close
+    # command for lifecycle cleanup after the physical private-canvas checks.
+    driver.close_chrome_window()
     driver.switch_to_window(public_canvas)
     canvas_document_note(driver, note_id, changed)
     assert not driver.execute_script('''
@@ -379,7 +382,7 @@ def verify_native_newtab_ux(driver, fixture_handle, url, result, folder):
         return gBrowser.selectedBrowser.contentWindow.OrbitCanvasBridge.getBoard().items.some(item =>
             item.id === arguments[0]);
     ''', script_args=[private_note]), "Closed private-window board survived into a new private session"
-    chord(driver, Keys.CONTROL, Keys.SHIFT, "w")
+    driver.close_chrome_window()
     driver.switch_to_window(fixture_handle)
     driver.set_context("chrome")
     checks.append("Native private canvas tabs share only their window's in-memory board, never persist it, and discard it when the private window closes")
