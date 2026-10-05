@@ -9,6 +9,10 @@
     "browser/branding/unofficial/configure.sh": "f42e11ddad27285de8c58e4e48fa979119c37a72",
     "browser/branding/unofficial/locales/en-US/brand.ftl": "5eaea9a7c4e874640464aff1c123ae3058d98302",
     "browser/branding/unofficial/locales/en-US/brand.properties": "346c3bdb509bf70237d4a1a4a6cd613f33fbf830",
-    "browser/branding/unofficial/pref/firefox-branding.js": "f22dd0a51ccb367bbbb418d90aba6c8b6dbd7308"
+    "browser/branding/unofficial/pref/firefox-branding.js": "f22dd0a51ccb367bbbb418d90aba6c8b6dbd7308",
+    "browser/branding/unofficial/content/about-logo.svg": "787413ae718942de14591a611f25a3ad70327fcc",
+    "browser/branding/unofficial/content/about-wordmark.svg": "1ef3fe6cb337a49874d488e36c033021d4faaba8",
+    "browser/branding/unofficial/content/firefox-wordmark.svg": "78bf22d247aeaf913973fa9184922d0c0647e4ca",
+    "browser/branding/unofficial/content/aboutDialog.css": "be57b002fc33d8a068531816ebbf4c38219c59e0"
   }
 }

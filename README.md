@@ -14,13 +14,13 @@ The [Windows prototype workflow](https://github.com/Marvinhaemke/orbit-browser/a
 
 After a successful run, download its `Orbit-Windows-x64` artifact and extract it once to a writable folder. Run `Launch-Orbit.cmd` beside `orbit.exe` and `START-HERE.txt`. Windows may show the launcher as **Launch-Orbit** when file extensions are hidden. The launcher uses a dedicated Orbit profile. The native executable is `orbit.exe`, using Mozilla’s compiled Gecko engine with Orbit’s rebuilt browser interface.
 
-Use the **Orbit canvas** toolbar button or **Alt + Shift + O** to open the workspace. Firefox’s normal toolbar and tab strip remain available.
+Every new tab opens the **Orbit canvas**. Ctrl+T and the native plus button retain address-bar focus so you can immediately type a website. The **Orbit canvas** toolbar button or **Alt + Shift + O** also opens the workspace over an existing page. Multiple canvas tabs share the same window’s workspace.
 
 ## Radial browser interaction
 
 - **Quick right-click on a webpage:** release the button to open page actions. **Open in new tab** sits in the center and uses the clicked link or image when available; otherwise it opens the current page in a new tab.
 - **Hold the right button:** the tab wheel appears on button down. Move onto a tab and release to switch to it. Releasing without choosing a tab opens page actions.
-- **Hover a submenu:** another ring opens outside the current ring. Native tab groups and **More** work the same way, including further layers. Each ring contains at most eight options.
+- **Hover a submenu:** a compact fan opens outside the item you hovered. Its options stay near their parent rather than filling the entire outer ring. Native tab groups and **More** work the same way, including further layers. Each ring contains at most eight options.
 - **Escape:** move back one layer, then dismiss. Arrow keys and Enter also navigate the menu. Clicking outside dismisses it.
 
 The page wheel uses Firefox’s actual context commands for links, images, selected text, editing, media, and extension actions. Its animations follow the operating system’s reduced-motion preference, and its colors adapt to light, dark, and high-contrast settings.
@@ -34,6 +34,8 @@ Close Orbit, then double-click **Update-Orbit.cmd**. It downloads the latest tes
 The updater replaces the two packaged interface archives, verifies their hashes and the installed engine, keeps a backup, and clears Firefox’s compiled interface caches on restart. It refuses an incompatible engine or an update while Orbit is running. If Gecko changes, use a new full browser download instead.
 
 The [Windows prototype update channel](https://github.com/Marvinhaemke/orbit-browser/releases/tag/windows-prototype) is published only after the native browser passes runtime verification, the Windows updater passes integrity and rollback tests, and the updated installation passes the same native runtime checks. Only successful builds on `main` publish updates.
+
+Orbit’s default appearance combines moonstone and mineral-ink surfaces, lagoon cyan accents, an orbital O logo, and sculpted controls. The toolbar, tabs, address bar, canvas, and radial menus share this identity. Fluid transitions respect reduced motion, and explicitly selected Firefox themes keep their colors.
 
 The source implements:
 
@@ -74,10 +76,10 @@ The runtime code uses Firefox’s platform-neutral browser APIs. The first packa
 
 ## Prototype boundaries
 
-- The native tab strip, browser toolbar, and operating-system menus retain their upstream layouts. Webpage context actions use the new radial interface.
+- The native tab strip and browser toolbar keep Firefox’s underlying controls with Orbit’s default styling. Webpage context actions use the radial interface; operating-system menus remain native.
 - Workspace persistence follows Firefox’s session restoration. Private workspaces are not written into session state.
 - Removing a canvas card does not close its browser tab.
 - Automatic Firefox application updates are disabled so an upstream update cannot replace Orbit’s modified interface. Orbit’s prototype updater delivers tested interface changes; engine upgrades need a full package.
-- The prototype uses upstream unofficial artwork. Installer creation, code signing, full engine updates, and release builds are future work.
+- Orbit has its own canvas, toolbar, and About artwork. The artifact engine still carries upstream executable/taskbar artwork. Installer creation, code signing, full engine updates, and release builds are future work.
 
 See [architecture](docs/architecture.md) for the integration points and [the source pin](firefox-source.json) for upstream provenance. New Orbit source is licensed under [MPL 2.0](LICENSE); Firefox retains its upstream and third-party licenses.

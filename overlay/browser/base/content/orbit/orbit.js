@@ -1,15 +1,27 @@
-/* Orbit's canvas is privileged Firefox chrome. All page loads and persistence
- * go through the parent bridge; cards only display native tab metadata. */
+/* Orbit's canvas is packaged browser chrome. All page loads and persistence
+ * go through its document-bound bridge; cards display native tab metadata. */
 "use strict";
 
 (() => {
   const $ = id => document.getElementById(id);
   const viewport = $("viewport");
   const world = $("world");
-  const bridge = parent.OrbitChrome;
+  let bridge;
+  try {
+    bridge = parent !== window && parent.OrbitChrome
+      ? parent.OrbitChrome
+      : ChromeUtils.importESModule("moz-src:///browser/components/orbit/Orbit.sys.mjs")
+          .Orbit.connectCanvas(window);
+  } catch (error) {
+    console.error("Orbit canvas connection:", error);
+  }
+  // The native new-tab document owns its bridge. Browser-window APIs continue
+  // to serve the toolbar overlay, so neither surface can impersonate the other.
+  Object.defineProperty(window, "OrbitCanvasBridge", { value: bridge });
+  document.documentElement.dataset.orbitSurface = parent === window ? "newtab" : "overlay";
   const SVG = "http://www.w3.org/2000/svg";
-  const palette = ["#9782ca", "#7baba0", "#d39a75", "#869bc8", "#bf8dad"];
-  const noteColors = ["#fff1ad", "#f5dce9", "#dceee4", "#e3def9"];
+  const palette = ["#8c86f4", "#70ded3", "#a7b4d6", "#ac9be8", "#83c9e0"];
+  const noteColors = ["#70ded3", "#8c86f4", "#e9eef5", "#a7b4d6"];
   const clone = value => JSON.parse(JSON.stringify(value));
   const id = () => crypto.randomUUID();
   const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
@@ -74,6 +86,7 @@
 
   function persist() {
     clearTimeout(saveTimer);
+    saveTimer = null;
     try {
       bridge.saveBoard({...board, strokes: board.strokes.filter(stroke => stroke.points.length >= 2)});
       $("save-status").textContent = "◌ Workspace saved";
@@ -257,11 +270,11 @@
     top.append(el("div", "site-mark", domain(item.url).slice(0, 1).toUpperCase()));
     const site = el("div", "card-site");
     site.append(el("div", "card-domain", domain(item.url)),
-      el("div", "tab-status", tab ? (tab.active ? "Active browser tab" : "Open in Firefox") : "Saved website"));
+      el("div", "tab-status", tab ? (tab.active ? "Active browser tab" : "Open in Orbit") : "Saved website"));
     top.append(site);
     node.append(top, el("div", "card-title", item.title || domain(item.url)));
     const actions = el("div", "card-actions");
-    actions.append(button("Open ↗", "Open this real Firefox tab", () => tabAction(item, "open")),
+    actions.append(button("Open ↗", "Open this Orbit tab", () => tabAction(item, "open")),
       button("Peek", "Preview the live website beside the canvas", () => tabAction(item, "peek")),
       button("Compare", "Open beside your active page", () => tabAction(item, "split")));
     node.append(actions);
@@ -394,7 +407,7 @@
       const path = document.createElementNS(SVG, "path");
       path.setAttribute("d", curve(from, to));
       path.setAttribute("fill", "none");
-      path.setAttribute("stroke", "#9286bc");
+      path.setAttribute("stroke", "#8c86f4");
       path.setAttribute("stroke-width", "2");
       path.setAttribute("marker-end", "url(#arrow)");
       path.dataset.connection = link.id;
@@ -593,7 +606,7 @@
         toast("This workspace has reached its drawing limit."); return;
       }
       checkpoint();
-      const stroke = {id: id(), color: "#9782ca", width: 3, points: [p]};
+      const stroke = {id: id(), color: "#8c86f4", width: 3, points: [p]};
       board.strokes.push(stroke);
       drag = {type: "draw", stroke,
         pointBudget: Math.min(3000, 20000 - board.strokes.filter(s => s !== stroke).reduce((sum, s) => sum + s.points.length, 0))};
@@ -735,7 +748,7 @@
   async function start() {
     if (!bridge) {
       $("save-status").textContent = "Native browser bridge unavailable";
-      toast("Open Orbit Canvas using this browser’s canvas button.");
+      toast("Open a new Orbit tab or use the canvas button.");
       document.querySelectorAll("button").forEach(node => { node.disabled = true; });
       return;
     }
@@ -751,7 +764,22 @@
       render();
       if (!saved && board.items.length) fit();
       persist();
-      unsubscribe = bridge.subscribe(() => refreshTabs().catch(report));
+      unsubscribe = bridge.subscribe((_tabs, change) => {
+        if (change?.type === "board-changed") {
+          // Every native canvas in this window shares the same workspace. An
+          // external edit invalidates pending saves and undo from the old board.
+          clearTimeout(saveTimer);
+          saveTimer = null;
+          board = change.board;
+          history.length = 0;
+          $("undo").disabled = true;
+          if (![...board.items, ...board.frames].some(item => item.id === selected)) selected = null;
+          render();
+          $("save-status").textContent = "◌ Workspace saved";
+        } else {
+          refreshTabs().catch(report);
+        }
+      });
     } catch (error) { report(error); }
   }
 
@@ -796,7 +824,7 @@
       form.reset();
       render();
       persist();
-      toast("Real Firefox tab added to canvas");
+      toast("Orbit tab added to canvas");
     } catch (error) {
       $("url-error").textContent = error.message || "This website could not be opened.";
       $("url-error").hidden = false;
@@ -843,7 +871,18 @@
     if (event.key === " ") { spaceHeld = false; if (!drag) viewport.classList.remove("panning"); }
   });
   document.addEventListener("pointerdown", event => { if (!event.target.closest("#radial") && !viewport.contains(event.target)) hideRadial(); });
-  window.addEventListener("blur", () => { spaceHeld = false; viewport.classList.remove("panning"); });
+  window.addEventListener("blur", () => {
+    spaceHeld = false;
+    viewport.classList.remove("panning");
+    // Native tab selection blurs the canvas before marking the tab closing.
+    // Flush pending note/camera edits while its document-bound bridge is valid.
+    if (bridge && saveTimer) persist();
+  });
+  window.addEventListener("beforeunload", () => {
+    // Firefox's native permitUnload runs while the document is current. This
+    // listener only saves; it never cancels navigation or requests a prompt.
+    if (bridge && saveTimer) persist();
+  });
   window.addEventListener("pagehide", () => { if (bridge) persist(); unsubscribe?.(); });
   start();
 })();

@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import math
 from pathlib import Path
 import tempfile
 import threading
@@ -151,7 +152,10 @@ def radial_state(driver):
                 label: node.getAttribute("aria-label") || node.textContent.trim(),
                 disabled: node.getAttribute("aria-disabled") === "true" || node.disabled,
                 submenu: node.getAttribute("aria-haspopup") === "menu",
+                parent: node.classList.contains("orbit-radial-parent"),
                 active: node.classList.contains("orbit-radial-active"),
+                angle: Number(node.dataset.orbitAngle),
+                start: Number(node.dataset.orbitStart), end: Number(node.dataset.orbitEnd),
                 hitX: Number(node.dataset.orbitX), hitY: Number(node.dataset.orbitY),
                 inner: Number(node.dataset.orbitInner), outer: Number(node.dataset.orbitOuter),
                 x: box.x, y: box.y, w: box.width, h: box.height,
@@ -159,6 +163,14 @@ def radial_state(driver):
         }) : [];
         return {
             visible: !!visible, mode: root?.dataset.mode, items,
+            center: {x: Number(root?.querySelector("#orbit-radial-menu")?.dataset.orbitCenterX),
+                y: Number(root?.querySelector("#orbit-radial-menu")?.dataset.orbitCenterY)},
+            rings: visible ? [...root.querySelectorAll(".orbit-radial-ring")].map(ring => ({
+                depth: Number(ring.dataset.orbitDepth), fan: ring.classList.contains("orbit-radial-fan"),
+                anchor: Number(ring.dataset.orbitAnchor), span: Number(ring.dataset.orbitSpan),
+                start: Number(ring.dataset.orbitStart), end: Number(ring.dataset.orbitEnd),
+                inner: Number(ring.dataset.orbitInner), outer: Number(ring.dataset.orbitOuter),
+            })) : [],
             pagePopup: document.getElementById("contentAreaContextMenu")?.state,
             tabPopup: document.getElementById("tabContextMenu")?.state,
             held: root?.classList.contains("orbit-radial-held"),
@@ -324,6 +336,67 @@ def assert_max_eight(driver):
             rings.setdefault(item["depth"], set()).add(item["id"])
     assert rings and all(len(items) <= 8 for items in rings.values()), rings
     return {str(depth): sorted(items) for depth, items in rings.items()}
+
+
+def assert_parent_fans(driver):
+    """Verify the packaged SVG matches its real parent and hit coordinates."""
+    state = radial_state(driver)
+    assert state["rings"] and not state["rings"][0]["fan"], state
+    assert math.isclose(state["rings"][0]["span"], math.tau, abs_tol=0.0001), state
+    fans = [ring for ring in state["rings"] if ring["fan"]]
+    assert fans, f"No child fan rendered: {state}"
+    for ring in fans:
+        parent = next(item for item in state["items"]
+                      if item["parent"] and item["depth"] == ring["depth"] - 1)
+        assert math.isclose(ring["anchor"], parent["angle"], abs_tol=0.0001), (ring, parent)
+        assert 0 < ring["span"] <= math.radians(160) + 0.0001, ring
+        assert math.isclose((ring["start"] + ring["end"]) / 2,
+                            parent["angle"], abs_tol=0.0001), (ring, parent)
+        children = [item for item in state["items"] if item["depth"] == ring["depth"]]
+        assert children, ring
+        for item in children:
+            distance = math.hypot(item["hitX"] - state["center"]["x"],
+                                  item["hitY"] - state["center"]["y"])
+            assert ring["inner"] < distance < ring["outer"], (ring, item)
+            delta = math.atan2(math.sin(item["angle"] - parent["angle"]),
+                               math.cos(item["angle"] - parent["angle"]))
+            assert abs(delta) <= ring["span"] / 2 + 0.0001, (ring, item)
+    return state
+
+
+def blank_fan_point(driver, held=False):
+    state = assert_parent_fans(driver)
+    ring = state["rings"][-1]
+    radius = (ring["inner"] + ring["outer"]) / 2
+    browser = driver.execute_script('''
+        const box = gBrowser.selectedBrowser.getBoundingClientRect();
+        return {left: box.left, right: box.right, top: box.top, bottom: box.bottom};
+    ''')
+    # A held release needs a real content target for Firefox's ContextMenu
+    # actor. Keep the blank test point within the selected browser, even when
+    # deep menu clamping positions part of its circumference above the page.
+    point = None
+    for offset in (0, -.3, .3, -.6, .6, -.9, .9, -1.2, 1.2):
+        angle = ring["anchor"] + math.pi + offset
+        candidate = {"x": round(state["center"]["x"] + math.cos(angle) * radius),
+                     "y": round(state["center"]["y"] + math.sin(angle) * radius)}
+        if (browser["left"] + 12 < candidate["x"] < browser["right"] - 12 and
+                browser["top"] + 12 < candidate["y"] < browser["bottom"] - 12):
+            point = candidate
+            break
+    assert point, (state, browser)
+    hit = driver.execute_script('''
+        const node = document.elementFromPoint(arguments[0].x, arguments[0].y);
+        return {root: !!node?.closest("#orbit-radial-root"),
+            command: node?.closest("[data-orbit-id]")?.dataset.orbitId,
+            tag: node?.localName, id: node?.id};
+    ''', script_args=[point])
+    assert not hit["root"] and not hit.get("command"), (point, hit, state)
+    # While held, the whole radial is correctly pointer transparent. Geometry
+    # above identifies the blank arc; native hit testing still targets content.
+    if held:
+        assert hit["tag"] == "browser", (point, hit, state)
+    return point
 
 
 def select_fixture(driver, handle):
@@ -593,6 +666,7 @@ def run_checks(driver, handle, url, result, folder):
     assert driver.execute_script("return gBrowser.selectedBrowser.currentURI.spec;") == selected_before
     rings = assert_max_eight(driver)
     assert max(map(int, rings)) >= 1, "Native submenu did not form an outer ring"
+    assert_parent_fans(driver)
     screenshot(driver, folder, "radial-context-native-frame", result["screenshots"])
     find_action(driver, "context-openframeintab")
     activate(driver, "context-openframeintab")
@@ -663,6 +737,7 @@ def run_checks(driver, handle, url, result, folder):
         assert driver.execute_script("return gBrowser.selectedBrowser.currentURI.spec;") == selected_before, "Hovering switched the selected tab"
         rings = assert_max_eight(driver)
         assert max(map(int, rings)) >= 2, f"Native groups and More did not form three rings: {rings}"
+        assert_parent_fans(driver)
         screenshot(driver, folder, f'radial-tabs-nested-{"dark" if dark else "light"}', result["screenshots"])
         right_up(driver)
         wait_for(driver, "return gBrowser.selectedBrowser.currentURI.spec === arguments[0];", "held release selects actual grouped tab", [url + "group-10-tab-12"])
@@ -675,6 +750,25 @@ def run_checks(driver, handle, url, result, folder):
         driver.execute_script("window.orbitSmokeNativeGroups[9].collapsed = true;")
     checks.append("RMB-down displays Tabs immediately; actual collapsed groups and More expand to three rings with at most eight choices per ring")
     checks.append("Hover never activates; RMB release over a nested leaf selects and reveals the real native tab")
+    checks.append("Native Frame, tab groups, and recursive More submenus fan out symmetrically from their actual parent within 160 degrees")
+
+    held_tabs(driver, handle)
+    group = find_item(driver, lambda item: "Orbit Native Group 10" in item["label"], "native group for blank fan release")
+    hover_node(driver, group["id"])
+    leaf = find_item(driver, lambda item: "group-10-tab-12" in item["label"], "nested leaf before blank fan release")
+    hover_node(driver, leaf["id"])
+    settle_radial(driver)
+    point = blank_fan_point(driver, held=True)
+    selected_before = driver.execute_script("return gBrowser.selectedBrowser.currentURI.spec;")
+    before = native_tab_count(driver)
+    pointer(driver).pointer_move(point["x"], point["y"], duration=25, origin="viewport").perform()
+    right_up(driver)
+    wait_radial(driver, "context")
+    assert driver.execute_script("return gBrowser.selectedBrowser.currentURI.spec;") == selected_before
+    assert native_tab_count(driver) == before, "Blank fan release activated a hidden or previously hovered tab"
+    dismiss(driver)
+    assert_context_cleanup(driver)
+    checks.append("Releasing RMB in a blank outer-fan arc keeps the selected tab and opens page actions without activating the previous leaf")
 
     held_tabs(driver, handle)
     target = find_item(driver, lambda item: "tab-switch-target" in item["label"], "ungrouped real native tab")
@@ -710,10 +804,18 @@ def run_checks(driver, handle, url, result, folder):
             .some(node => Number(node.dataset.orbitDepth) >= 1);
     ''', "native Context overflow forms a second ring", [ROOT_ID])
     assert_max_eight(driver)
+    assert_parent_fans(driver)
+    settle_radial(driver)
     screenshot(driver, folder, "radial-context-actions", result["screenshots"])
-    dismiss(driver)
+    point = blank_fan_point(driver)
+    before = native_tab_count(driver)
+    clipboard_before = driver.execute_script(CLIPBOARD_SCRIPT)
+    pointer(driver).pointer_move(point["x"], point["y"], origin="viewport").click().perform()
     assert_context_cleanup(driver)
+    assert native_tab_count(driver) == before, "Clicking blank fan space executed an unrelated tab command"
+    assert driver.execute_script(CLIPBOARD_SCRIPT) == clipboard_before, "Clicking blank fan space executed an unrelated copy command"
     checks.append("Native page action overflow remains reachable in a second Context ring")
+    checks.append("Empty outer-fan arcs pass native SVG hit testing to the page and a trusted outside click dismisses the radial")
 
     page_menu(driver, handle)
     key(driver, Keys.ESCAPE)

@@ -46,12 +46,18 @@ class SourceGuardTests(unittest.TestCase):
             "browser/components/orbit/OrbitRadialView.sys.mjs",
             "browser/components/orbit/OrbitRadialChild.sys.mjs",
             "browser/components/orbit/OrbitRadialParent.sys.mjs",
+            "browser/components/orbit/OrbitTheme.sys.mjs",
             "browser/components/orbit/moz.build",
             "browser/base/content/orbit/orbit.html",
             "browser/base/content/orbit/orbit.css",
             "browser/base/content/orbit/orbit.js",
             "browser/base/content/orbit/orbit.svg",
             "browser/base/content/orbit/orbit-radial.css",
+            "browser/base/content/orbit/orbit-chrome.css",
+            "browser/branding/unofficial/content/about-logo.svg",
+            "browser/branding/unofficial/content/about-wordmark.svg",
+            "browser/branding/unofficial/content/firefox-wordmark.svg",
+            "browser/branding/unofficial/content/aboutDialog.css",
         ):
             destination = self.root / "overlay" / path
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -83,7 +89,8 @@ class SourceGuardTests(unittest.TestCase):
         self.assertIn("content/browser/orbit/orbit.html", (self.source / "browser/base/jar.mn").read_text(encoding="utf-8"))
         self.assertIn("content/browser/orbit/orbit.svg", (self.source / "browser/base/jar.mn").read_text(encoding="utf-8"))
         self.assertIn("content/browser/orbit/orbit-radial.css (content/orbit/orbit-radial.css)", (self.source / "browser/base/jar.mn").read_text(encoding="utf-8"))
-        for name in ("OrbitRadial.sys.mjs", "OrbitRadialView.sys.mjs", "OrbitRadialChild.sys.mjs", "OrbitRadialParent.sys.mjs"):
+        self.assertIn("content/browser/orbit/orbit-chrome.css", (self.source / "browser/base/jar.mn").read_text(encoding="utf-8"))
+        for name in ("OrbitRadial.sys.mjs", "OrbitRadialView.sys.mjs", "OrbitRadialChild.sys.mjs", "OrbitRadialParent.sys.mjs", "OrbitTheme.sys.mjs"):
             self.assertEqual((self.source / "browser/components/orbit" / name).read_text(encoding="utf-8"), "test overlay\n")
 
     def test_upstream_drift_aborts_without_partial_writes(self):
@@ -109,7 +116,9 @@ class SourceGuardTests(unittest.TestCase):
             "browser/components/orbit/OrbitRadialView.sys.mjs",
             "browser/components/orbit/OrbitRadialChild.sys.mjs",
             "browser/components/orbit/OrbitRadialParent.sys.mjs",
+            "browser/components/orbit/OrbitTheme.sys.mjs",
             "browser/base/content/orbit/orbit-radial.css",
+            "browser/base/content/orbit/orbit-chrome.css",
         ):
             with self.subTest(path=path):
                 resource = self.root / "overlay" / path
@@ -134,16 +143,19 @@ class PackageGuardTests(unittest.TestCase):
             (folder / name).write_bytes(b"native-package-test-fixture")
         (folder / "application.ini").write_text("[App]\nName=Orbit\n", encoding="utf-8")
         with zipfile.ZipFile(folder / "omni.ja", "w") as archive:
-            for name in ("Orbit.sys.mjs", "OrbitRadial.sys.mjs", "OrbitRadialView.sys.mjs", "OrbitRadialChild.sys.mjs", "OrbitRadialParent.sys.mjs"):
+            for name in ("Orbit.sys.mjs", "OrbitRadial.sys.mjs", "OrbitRadialView.sys.mjs", "OrbitRadialChild.sys.mjs", "OrbitRadialParent.sys.mjs", "OrbitTheme.sys.mjs"):
                 if name != omitted:
                     archive.writestr(f"moz-src/browser/components/orbit/{name}", "fixture")
         with zipfile.ZipFile(folder / "browser/omni.ja", "w") as archive:
-            for name in ("orbit.html", "orbit.css", "orbit.js", "orbit.svg", "orbit-radial.css"):
+            for name in ("orbit.html", "orbit.css", "orbit.js", "orbit.svg", "orbit-radial.css", "orbit-chrome.css"):
                 if name != omitted:
                     archive.writestr(f"chrome/browser/content/browser/orbit/{name}", "fixture")
+            for name in ("about-logo.svg", "about-wordmark.svg", "firefox-wordmark.svg", "aboutDialog.css"):
+                if name != omitted:
+                    archive.writestr(f"chrome/browser/content/branding/{name}", "fixture")
 
     def test_package_without_a_required_radial_resource_is_rejected(self):
-        for name in ("OrbitRadial.sys.mjs", "OrbitRadialView.sys.mjs", "OrbitRadialChild.sys.mjs", "OrbitRadialParent.sys.mjs", "orbit-radial.css"):
+        for name in ("OrbitRadial.sys.mjs", "OrbitRadialView.sys.mjs", "OrbitRadialChild.sys.mjs", "OrbitRadialParent.sys.mjs", "OrbitTheme.sys.mjs", "orbit-radial.css", "orbit-chrome.css", "about-logo.svg"):
             with self.subTest(resource=name), tempfile.TemporaryDirectory() as directory:
                 folder = Path(directory)
                 self.native_fixture(folder, omitted=name)

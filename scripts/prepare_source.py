@@ -59,7 +59,7 @@ def git_blob_hash(text: str) -> str:
     return hashlib.sha1(b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw).hexdigest()
 
 
-def transform(path: str, original: str) -> str:
+def transform(path: str, original: str, root: Path = ROOT) -> str:
     """Small native registration/branding changes, reviewed against the pin."""
     if path == "browser/components/moz.build":
         return original.replace('    "originattributes",\n', '    "orbit",\n    "originattributes",\n', 1)
@@ -77,19 +77,27 @@ def transform(path: str, original: str) -> str:
             "        content/browser/orbit/orbit.css  (content/orbit/orbit.css)\n"
             "        content/browser/orbit/orbit.js   (content/orbit/orbit.js)\n"
             "        content/browser/orbit/orbit.svg  (content/orbit/orbit.svg)\n"
-            "        content/browser/orbit/orbit-radial.css (content/orbit/orbit-radial.css)\n",
+            "        content/browser/orbit/orbit-radial.css (content/orbit/orbit-radial.css)\n"
+            "        content/browser/orbit/orbit-chrome.css (content/orbit/orbit-chrome.css)\n",
             1,
         )
     if path == "browser/branding/unofficial/configure.sh":
-        return original.replace("MOZ_APP_DISPLAYNAME=Nightly", "MOZ_APP_DISPLAYNAME='Orbit Prototype'").replace(
+        return original.replace("MOZ_APP_DISPLAYNAME=Nightly", "MOZ_APP_DISPLAYNAME=Orbit").replace(
             "MOZ_MACBUNDLE_ID=nightlyunofficial", "MOZ_MACBUNDLE_ID=io.orbitbrowser.prototype"
         )
     if path == "browser/branding/unofficial/locales/en-US/brand.ftl":
-        return original.replace(" = Nightly", " = Orbit Prototype").replace(
+        return original.replace(" = Nightly", " = Orbit").replace(
             "-brand-product-name = Firefox", "-brand-product-name = Orbit"
         ).replace("-vendor-short-name = Mozilla", "-vendor-short-name = Orbit")
     if path == "browser/branding/unofficial/locales/en-US/brand.properties":
-        return original.replace("=Nightly", "=Orbit Prototype")
+        return original.replace("=Nightly", "=Orbit")
+    if path in (
+        "browser/branding/unofficial/content/about-logo.svg",
+        "browser/branding/unofficial/content/about-wordmark.svg",
+        "browser/branding/unofficial/content/firefox-wordmark.svg",
+        "browser/branding/unofficial/content/aboutDialog.css",
+    ):
+        return (root / "overlay" / path).read_text(encoding="utf-8")
     if path == "browser/branding/unofficial/pref/firefox-branding.js":
         return original + (
             "\n// Orbit prototypes are updated only by rebuilding this fork.\n"
@@ -106,25 +114,6 @@ def transform(path: str, original: str) -> str:
 
 def apply_overlay(source: Path, root: Path = ROOT) -> None:
     pin = load_pin(root)
-    pending: list[tuple[Path, str]] = []
-    # Validate every touched upstream file before changing any file. Re-running
-    # is safe, but changed upstream or manually edited parent files fail closed.
-    for path, expected_blob in pin["upstream_modified_files"].items():
-        destination = source / path
-        original = destination.read_text(encoding="utf-8")
-        if git_blob_hash(original) == expected_blob:
-            changed = transform(path, original)
-            if changed == original:
-                raise ValueError(f"Registration anchor disappeared: {path}")
-        else:
-            # Obtain the pristine pinned text locally, without network, to
-            # distinguish an idempotent reapply from upstream drift.
-            pristine = run_git(source, "show", f"{pin['revision']}:{path}", capture=True)
-            if git_blob_hash(pristine) != expected_blob or original != transform(path, pristine):
-                raise ValueError(f"Unexpected upstream change or local edit in {path}; no files were changed.")
-            changed = original
-        pending.append((destination, changed))
-
     overlay = root / "overlay"
     required = [
         "browser/components/orbit/Orbit.sys.mjs",
@@ -132,16 +121,41 @@ def apply_overlay(source: Path, root: Path = ROOT) -> None:
         "browser/components/orbit/OrbitRadialView.sys.mjs",
         "browser/components/orbit/OrbitRadialChild.sys.mjs",
         "browser/components/orbit/OrbitRadialParent.sys.mjs",
+        "browser/components/orbit/OrbitTheme.sys.mjs",
         "browser/components/orbit/moz.build",
         "browser/base/content/orbit/orbit.html",
         "browser/base/content/orbit/orbit.css",
         "browser/base/content/orbit/orbit.js",
         "browser/base/content/orbit/orbit.svg",
         "browser/base/content/orbit/orbit-radial.css",
+        "browser/base/content/orbit/orbit-chrome.css",
+        "browser/branding/unofficial/content/about-logo.svg",
+        "browser/branding/unofficial/content/about-wordmark.svg",
+        "browser/branding/unofficial/content/firefox-wordmark.svg",
+        "browser/branding/unofficial/content/aboutDialog.css",
     ]
     for path in required:
         if not (overlay / path).is_file():
             raise ValueError(f"Missing required native overlay file: {path}")
+
+    pending: list[tuple[Path, str]] = []
+    # Validate every touched upstream file before changing any file. Re-running
+    # is safe, but changed upstream or manually edited parent files fail closed.
+    for path, expected_blob in pin["upstream_modified_files"].items():
+        destination = source / path
+        original = destination.read_text(encoding="utf-8")
+        if git_blob_hash(original) == expected_blob:
+            changed = transform(path, original, root)
+            if changed == original:
+                raise ValueError(f"Registration anchor disappeared: {path}")
+        else:
+            # Obtain the pristine pinned text locally, without network, to
+            # distinguish an idempotent reapply from upstream drift.
+            pristine = run_git(source, "show", f"{pin['revision']}:{path}", capture=True)
+            if git_blob_hash(pristine) != expected_blob or original != transform(path, pristine, root):
+                raise ValueError(f"Unexpected upstream change or local edit in {path}; no files were changed.")
+            changed = original
+        pending.append((destination, changed))
 
     for destination, changed in pending:
         destination.write_text(changed, encoding="utf-8", newline="\n")

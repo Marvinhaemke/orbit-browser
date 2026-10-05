@@ -1,0 +1,14 @@
+<!-- This Source Code Form is subject to the terms of the Mozilla Public
+   - License, v. 2.0. If a copy of the MPL was not distributed with this
+   - file, You can obtain one at https://mozilla.org/MPL/2.0/. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="220" height="72" viewBox="0 0 220 72">
+  <title>Orbit</title>
+  <g fill="none" stroke="context-fill #e9f7f8" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M31 12c-15 0-24 10-24 24s9 24 24 24 24-10 24-24-9-24-24-24Z"/>
+    <path d="M74 60V32m0 10c0-12 8-18 19-16"/>
+    <path d="M110 12v48m0-17c0-11 7-18 17-18s17 7 17 18-7 18-17 18-17-7-17-18Z"/>
+    <path d="M162 29v31"/>
+    <path d="M190 16v33c0 9 5 12 14 11m-26-33h29"/>
+  </g>
+  <circle cx="162" cy="14" r="3.8" fill="context-fill #e9f7f8"/>
+</svg>

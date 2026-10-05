@@ -22,8 +22,10 @@ export function pageRadialItems(items, depth = 0) {
 }
 
 /** Pure geometry, also used by the actor's release hit test. All units are
- * viewport CSS pixels. Small windows shrink ring widths instead of clipping. */
-export function layoutRadialRings({width, height, center, counts}) {
+ * viewport CSS pixels. parentIndices identifies each opening sector in the
+ * preceding ring; its midpoint anchors a partial fan. Omitted parents retain
+ * standalone full rings. Small windows shrink ring widths instead of clipping. */
+export function layoutRadialRings({width, height, center, counts, parentIndices = []}) {
   const available = Math.max(1, Math.min(width, height) / 2 - 10);
   const count = Math.max(1, counts.length);
   const gap = Math.min(5, available / (count * 6));
@@ -41,13 +43,31 @@ export function layoutRadialRings({width, height, center, counts}) {
   const insetY = Math.min(placementRadius + 8, height / 2);
   const x = clamp(center.x, insetX, Math.max(insetX, width - insetX));
   const y = clamp(center.y, insetY, Math.max(insetY, height - insetY));
-  return {
-    center: {x, y}, radius, centerRadius, ringWidth, gap,
-    rings: counts.map((sectors, depth) => {
-      const inner = centerRadius + gap + widths.slice(0, depth).reduce((sum, width) => sum + width + gap, 0);
-      return {depth, count: sectors, inner, outer: Math.min(radius, inner + widths[depth])};
-    }),
-  };
+  const rings = [];
+  for (const [depth, sectors] of counts.entries()) {
+    const inner = centerRadius + gap + widths.slice(0, depth).reduce((sum, width) => sum + width + gap, 0);
+    const outer = Math.min(radius, inner + widths[depth]);
+    const parent = rings[depth - 1]?.sectors[parentIndices[depth - 1]];
+    const fan = !!parent;
+    const anchor = parent?.angle ?? -Math.PI / 2;
+    // An outer menu opens immediately beyond its parent. About 76 px of arc
+    // per option keeps labels readable, with a 160-degree cap so no command
+    // requires travelling around the opposite side of the menu.
+    const span = fan ? Math.min(TAU * 4 / 9,
+      Math.max(1, sectors) * clamp(76 / ((inner + outer) / 2), Math.PI / 18, Math.PI / 4)) : TAU;
+    const sectorAngle = span / Math.max(1, sectors);
+    const start = fan ? anchor - span / 2 : anchor - sectorAngle / 2;
+    const insetAngle = Math.min(.028, sectorAngle / 12);
+    rings.push({depth, count: sectors, inner, outer, fan, anchor, span, start, end: start + span,
+      sectorAngle, insetAngle,
+      sectors: Array.from({length: sectors}, (_, index) => ({index,
+        angle: start + (index + .5) * sectorAngle,
+        start: start + index * sectorAngle + insetAngle,
+        end: start + (index + 1) * sectorAngle - insetAngle,
+      })),
+    });
+  }
+  return {center: {x, y}, radius, centerRadius, ringWidth, gap, rings};
 }
 
 export function radialSectorPath(cx, cy, inner, outer, start, end) {
@@ -70,8 +90,14 @@ export function hitRadialGeometry(geometry, x, y) {
   if (distance <= geometry.centerRadius) return {center: true};
   const ring = geometry.rings.find(candidate => distance >= candidate.inner && distance <= candidate.outer);
   if (!ring || !ring.count) return null;
-  let angle = (Math.atan2(dy, dx) + Math.PI / 2 + Math.PI / ring.count + TAU) % TAU;
-  return {depth: ring.depth, index: Math.min(ring.count - 1, Math.floor(angle / (TAU / ring.count)))};
+  const angle = ((Math.atan2(dy, dx) - ring.start) % TAU + TAU) % TAU;
+  if (angle >= ring.span) return null;
+  const index = Math.min(ring.count - 1, Math.floor(angle / ring.sectorAngle));
+  // Hit only the painted sector, including its angular separators. A blank
+  // part of an outer fan must never activate a hidden command on release.
+  const within = angle - index * ring.sectorAngle;
+  if (within < ring.insetAngle || within > ring.sectorAngle - ring.insetAngle) return null;
+  return {depth: ring.depth, index};
 }
 
 function safeImage(icon) {
@@ -203,6 +229,9 @@ export class OrbitRadialView {
     this.root.append(this.panel);
     this.doc.documentElement.append(this.root);
     this._listen(this.panel, "pointermove", event => this.updatePointer(event.screenX, event.screenY));
+    this._listen(this.panel, "pointerleave", () => {
+      if (!this.model?.passthrough) this.win.clearTimeout(this.hoverTimer);
+    });
     this._listen(this.panel, "pointerup", event => {
       if (this.model?.passthrough || event.button !== 0) return;
       event.preventDefault();
@@ -285,7 +314,8 @@ export class OrbitRadialView {
     }
     const requested = this._toViewport(this.model.center || {x: this.win.innerWidth / 2, y: this.win.innerHeight / 2});
     this.geometry = layoutRadialRings({width: this.win.innerWidth, height: this.win.innerHeight,
-      center: requested, counts: this.rings.map(ring => ring.length)});
+      center: requested, counts: this.rings.map(ring => ring.length),
+      parentIndices: this.path.map((parent, depth) => this.rings[depth].findIndex(node => node.id === parent.id))});
     const geometry = this.geometry;
     const size = Math.ceil(geometry.radius * 2 + 8);
     const localCenter = size / 2;
@@ -293,6 +323,8 @@ export class OrbitRadialView {
     this.panel.style.top = `${geometry.center.y - localCenter}px`;
     this.panel.style.width = `${size}px`;
     this.panel.style.height = `${size}px`;
+    this.panel.dataset.orbitCenterX = geometry.center.x;
+    this.panel.dataset.orbitCenterY = geometry.center.y;
     this.root.style.setProperty("--orbit-menu-left", `${geometry.center.x - localCenter}px`);
     this.root.style.setProperty("--orbit-menu-top", `${geometry.center.y - localCenter}px`);
     this.root.style.setProperty("--orbit-menu-size", `${size}px`);
@@ -317,24 +349,34 @@ export class OrbitRadialView {
     const signatures = [];
     for (const [depth, nodes] of this.rings.entries()) {
       const ring = geometry.rings[depth];
-      const signature = nodes.map(node => node.id).join("\n");
+      const signature = `${ring.start}:${ring.span}\n${nodes.map(node => node.id).join("\n")}`;
       signatures.push(signature);
       const stable = this.ringSignatures[depth] === signature;
-      const ringGroup = this._svg("g", {class: `orbit-radial-ring${stable ? " orbit-radial-stable" : ""}`});
-      const sectorAngle = TAU / Math.max(1, nodes.length);
-      const insetAngle = Math.min(.028, sectorAngle / 12);
+      const ringGroup = this._svg("g", {class: `orbit-radial-ring${ring.fan ? " orbit-radial-fan" : ""}${stable ? " orbit-radial-stable" : ""}`,
+        "data-orbit-depth": depth, "data-orbit-anchor": ring.anchor, "data-orbit-span": ring.span,
+        "data-orbit-start": ring.start, "data-orbit-end": ring.end, "data-orbit-inner": ring.inner,
+        "data-orbit-outer": ring.outer});
+      if (ring.fan) {
+        ringGroup.style.setProperty("--orbit-fan-angle", `${ring.anchor * 180 / Math.PI}deg`);
+        ringGroup.style.setProperty("--orbit-fan-span", `${ring.span * 180 / Math.PI}deg`);
+        ringGroup.style.transformOrigin = `${localCenter + Math.cos(ring.anchor) * ring.inner}px ${localCenter + Math.sin(ring.anchor) * ring.inner}px`;
+      }
       nodes.forEach((node, index) => {
-        const angle = -Math.PI / 2 + index * sectorAngle;
+        const sector = ring.sectors[index];
+        const angle = sector.angle;
         const g = this._svg("g", {class: "orbit-radial-sector", role: "menuitem", tabindex: "-1",
           id: `orbit-radial-option-${depth}-${index}`,
           "aria-label": String(node.label || node.id), "aria-disabled": String(!!node.disabled),
           "data-orbit-id": node.id, "data-orbit-depth": depth, "data-orbit-index": index});
+        g.setAttribute("data-orbit-angle", angle);
+        g.setAttribute("data-orbit-start", sector.start);
+        g.setAttribute("data-orbit-end", sector.end);
         g.style.setProperty("--orbit-stagger", `${Math.min(8, depth * 2 + index) * 12}ms`);
         if (node.disabled) g.classList.add("orbit-radial-disabled");
         if (node.checked) g.classList.add("orbit-radial-checked");
         if (this.path[depth]?.id === node.id) g.classList.add("orbit-radial-parent");
         const path = this._svg("path", {d: radialSectorPath(localCenter, localCenter, ring.inner, ring.outer,
-          angle - sectorAngle / 2 + insetAngle, angle + sectorAngle / 2 - insetAngle), class: "orbit-radial-sector-shape"});
+          sector.start, sector.end), class: "orbit-radial-sector-shape"});
         g.append(path);
         const r = (ring.inner + ring.outer) / 2;
         const x = localCenter + Math.cos(angle) * r;
@@ -356,7 +398,7 @@ export class OrbitRadialView {
           }
         }
         if (!compact) {
-          const limit = clamp(Math.floor(r * sectorAngle / 6.5), 5, 14);
+          const limit = clamp(Math.floor(r * ring.sectorAngle / 6.5), 5, 14);
           shortLines(node.label, limit).forEach((line, lineIndex) => {
             const label = this._svg("text", {x, y: y + 9 + lineIndex * 12, class: "orbit-radial-label", "text-anchor": "middle"});
             label.textContent = line; g.append(label);
@@ -373,8 +415,18 @@ export class OrbitRadialView {
         const title = this._svg("title"); title.textContent = String(node.label || node.id); g.append(title);
         ringGroup.append(g);
       });
-      ringGroup.append(this._svg("circle", {cx: localCenter, cy: localCenter, r: ring.inner - geometry.gap / 2,
-        class: "orbit-radial-orbit", "pointer-events": "none"}));
+      const guideRadius = ring.inner - geometry.gap / 2;
+      if (ring.fan) {
+        const startX = localCenter + Math.cos(ring.start) * guideRadius;
+        const startY = localCenter + Math.sin(ring.start) * guideRadius;
+        const endX = localCenter + Math.cos(ring.end) * guideRadius;
+        const endY = localCenter + Math.sin(ring.end) * guideRadius;
+        ringGroup.append(this._svg("path", {d: `M ${startX} ${startY} A ${guideRadius} ${guideRadius} 0 0 1 ${endX} ${endY}`,
+          class: "orbit-radial-orbit", "pointer-events": "none"}));
+      } else {
+        ringGroup.append(this._svg("circle", {cx: localCenter, cy: localCenter, r: guideRadius,
+          class: "orbit-radial-orbit", "pointer-events": "none"}));
+      }
       svg.append(ringGroup);
     }
     this.ringSignatures = signatures;

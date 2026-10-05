@@ -30,7 +30,7 @@ def write_launcher(package: Path) -> None:
         '  pause\r\n'
         '  exit /b 1\r\n'
         ')\r\n'
-        'start "Orbit Prototype" "%~dp0orbit.exe" -no-remote -profile "%~dp0profile" %*\r\n',
+        'start "Orbit" "%~dp0orbit.exe" -no-remote -profile "%~dp0profile" %*\r\n',
         encoding="utf-8", newline="",
     )
 
@@ -68,11 +68,17 @@ def verify_native_package(package: Path) -> None:
         "browser/components/orbit/OrbitRadialView.sys.mjs",
         "browser/components/orbit/OrbitRadialChild.sys.mjs",
         "browser/components/orbit/OrbitRadialParent.sys.mjs",
+        "browser/components/orbit/OrbitTheme.sys.mjs",
         "orbit/orbit.html",
         "orbit/orbit.css",
         "orbit/orbit.js",
         "orbit/orbit.svg",
         "orbit/orbit-radial.css",
+        "orbit/orbit-chrome.css",
+        "branding/about-logo.svg",
+        "branding/about-wordmark.svg",
+        "branding/firefox-wordmark.svg",
+        "branding/aboutDialog.css",
     )
     for suffix in required_resources:
         if not any(name.endswith(suffix) for name in entries):
@@ -104,12 +110,12 @@ def main() -> None:
     for name in ("Update-Orbit.cmd", "Update-Orbit.ps1"):
         shutil.copy2(ROOT / "scripts" / "windows" / name, package / name)
     (package / "START-HERE.txt").write_text(
-        "Orbit Prototype — native Firefox frontend fork\n\n"
+        "Orbit — native Firefox frontend fork\n\n"
         "Extract this complete folder to a writable location. Run Launch-Orbit.cmd.\n"
         "Windows may display the launcher as Launch-Orbit without the extension.\n"
         "Launch-Orbit.cmd, START-HERE.txt, and orbit.exe belong in the same folder.\n"
         "The launcher uses a separate profile stored in this folder.\n"
-        "Open the Orbit toolbar button or Alt+Shift+O to see the tab canvas.\n"
+        "New tabs open the Orbit canvas. Use the Orbit toolbar button or Alt+Shift+O on any page.\n"
         "orbit.exe runs Gecko with Orbit's rebuilt native browser interface.\n"
         "To test the latest interface: close Orbit, then run Update-Orbit.cmd.\n"
         "It downloads the tested interface update and reopens the same profile.\n"

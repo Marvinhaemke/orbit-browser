@@ -10,11 +10,13 @@
  */
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
+  AboutNewTab: "resource:///modules/AboutNewTab.sys.mjs",
   ContextualIdentityService:
     "moz-src:///toolkit/components/contextualidentity/ContextualIdentityService.sys.mjs",
   CustomizableUI:
     "moz-src:///browser/components/customizableui/CustomizableUI.sys.mjs",
   OrbitRadial: "moz-src:///browser/components/orbit/OrbitRadial.sys.mjs",
+  OrbitTheme: "moz-src:///browser/components/orbit/OrbitTheme.sys.mjs",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
   SessionStore:
     "moz-src:///browser/components/sessionstore/SessionStore.sys.mjs",
@@ -209,6 +211,7 @@ class OrbitWindow {
     this.privateTabIDs = new WeakMap();
     this.claimedTabIDs = new Map();
     this.listeners = new Set();
+    this.canvasBridges = new WeakMap();
     this.cleanups = [];
     this.disposed = false;
     this.overlay = null;
@@ -218,35 +221,10 @@ class OrbitWindow {
     this.peekProgress = null;
     this.oldBrowserPosition = null;
 
-    // Only privileged chrome can obtain this object. Each call additionally
-    // verifies that the board iframe is still the packaged system document.
-    const bridge = {};
-    const expose = (name, callback) => {
-      bridge[name] = (...args) => {
-        this.assertBoard();
-        return callback(...args);
-      };
-    };
-    expose("getBoard", () => this.getBoard());
-    expose("saveBoard", board => this.saveBoard(board));
-    expose("listTabs", () => this.listTabs());
-    expose("openTab", record => this.openTab(record));
-    expose("openFrame", frameID => this.openFrame(frameID));
-    expose("selectTab", tabID => this.selectTab(tabID));
-    expose("closeTab", tabID => this.closeTab(tabID));
-    expose("peek", record => this.peek(record));
-    expose("closePeek", () => this.closePeek());
-    expose("split", record => this.split(record));
-    expose("hideCanvas", () => this.hide());
-    expose("subscribe", callback => {
-      if (typeof callback !== "function") {
-        throw new TypeError("Orbit subscription requires a function");
-      }
-      this.listeners.add(callback);
-      return () => this.listeners.delete(callback);
-    });
+    // The browser-window bridge keeps the toolbar canvas contract. Native new
+    // tabs receive separate bridges bound to their exact document and browser.
     Object.defineProperty(win, "OrbitChrome", {
-      value: Object.freeze(bridge),
+      value: this.createBridge(),
       configurable: true,
     });
 
@@ -279,19 +257,83 @@ class OrbitWindow {
     this.listen(win, "unload", () => this.destroy(), { once: true });
   }
 
+  createBridge(document = null, browser = null) {
+    const bridge = {};
+    const expose = (name, callback) => {
+      bridge[name] = (...args) => {
+        this.assertBoard(document, browser);
+        return callback(...args);
+      };
+    };
+    expose("getBoard", () => this.getBoard());
+    expose("saveBoard", board => this.saveBoard(board, document || this.frame?.contentDocument));
+    expose("listTabs", () => this.listTabs());
+    expose("openTab", record => this.openTab(record));
+    expose("openFrame", frameID => this.openFrame(frameID));
+    expose("selectTab", tabID => this.selectTab(tabID));
+    expose("closeTab", tabID => this.closeTab(tabID));
+    expose("peek", record => this.peek(record));
+    expose("closePeek", () => this.closePeek());
+    expose("split", record => this.split(record));
+    expose("hideCanvas", () => browser ? this.returnToBrowser(browser) : this.hide());
+    expose("subscribe", callback => {
+      if (typeof callback !== "function") {
+        throw new TypeError("Orbit subscription requires a function");
+      }
+      const source = document || this.frame?.contentDocument;
+      const listener = (tabs, change) => {
+        try {
+          this.assertBoard(source, browser);
+        } catch {
+          this.listeners.delete(listener);
+          return;
+        }
+        callback(tabs, change);
+      };
+      listener.document = source;
+      this.listeners.add(listener);
+      return () => this.listeners.delete(listener);
+    });
+    return Object.freeze(bridge);
+  }
+
   listen(target, name, callback, options) {
     target.addEventListener(name, callback, options);
     this.cleanups.push(() => target.removeEventListener(name, callback, options));
   }
 
-  assertBoard() {
-    const doc = this.frame?.contentDocument;
+  assertBoard(document = null, browser = null) {
+    const doc = document || this.frame?.contentDocument;
     if (
       this.disposed || !doc || doc.documentURI !== BOARD_URI ||
       !doc.nodePrincipal?.isSystemPrincipal
     ) {
       throw new Error("Orbit bridge is available only to the packaged canvas");
     }
+    if (browser) {
+      const tab = this.win.gBrowser.getTabForBrowser(browser);
+      const global = browser.browsingContext?.currentWindowGlobal;
+      if (
+        browser.ownerDocument?.defaultView !== this.win ||
+        browser.contentDocument !== doc || browser.currentURI?.spec !== BOARD_URI ||
+        !tab || tab.closing || !this.win.gBrowser.tabs.includes(tab) ||
+        global?.isCurrentGlobal === false || global?.isInBFCache || global?.isDiscarded
+      ) {
+        throw new Error("Orbit bridge is available only to a current native canvas tab");
+      }
+    } else if (document && this.frame?.contentDocument !== doc) {
+      throw new Error("Orbit bridge is available only to the current packaged canvas");
+    }
+  }
+
+  connectCanvas(document, browser) {
+    this.assertBoard(document, browser);
+    let bridge = this.canvasBridges.get(document);
+    if (!bridge) {
+      bridge = this.createBridge(document, browser);
+      this.canvasBridges.set(document, bridge);
+    }
+    return bridge;
   }
 
   getBoard() {
@@ -308,12 +350,13 @@ class OrbitWindow {
     return clone(this.board);
   }
 
-  saveBoard(value) {
+  saveBoard(value, source = null) {
     const board = validateBoard(value);
     if (!this.isPrivate) {
       lazy.SessionStore.setCustomWindowValue(this.win, BOARD_KEY, JSON.stringify(board));
     }
     this.board = board;
+    this.notify({ type: "board-changed", board }, source);
     return clone(board);
   }
 
@@ -451,6 +494,23 @@ class OrbitWindow {
     return this.describeTab(tab);
   }
 
+  returnToBrowser(browser) {
+    this.hide();
+    const candidates = this.win.gBrowser.tabs.filter(tab =>
+      !tab.closing && !tab.hidden && tab.linkedBrowser !== browser &&
+      tab.linkedBrowser?.currentURI?.spec !== BOARD_URI
+    );
+    candidates.sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0));
+    if (candidates.length) {
+      this.win.gBrowser.selectedTab = candidates[0];
+      candidates[0].linkedBrowser.focus();
+    } else {
+      // A fresh window may contain only canvases. Keep its real native new tab
+      // and offer the address bar rather than opening an extra empty document.
+      this.win.gURLBar?.select();
+    }
+  }
+
   closeTab(id) {
     const tab = this.findTab(id);
     if (tab) {
@@ -524,7 +584,7 @@ class OrbitWindow {
     const overlay = doc.createElementNS(HTML_NS, "div");
     overlay.id = "orbit-canvas-overlay";
     overlay.hidden = true;
-    overlay.style.cssText = "position:absolute;inset:0;z-index:20;background:#f3f2ef;";
+    overlay.style.cssText = "position:absolute;inset:0;z-index:20;background:#e9eef5;";
     const frame = doc.createElementNS(HTML_NS, "iframe");
     frame.id = "orbit-canvas-frame";
     frame.title = "Orbit spatial tab canvas";
@@ -666,7 +726,7 @@ class OrbitWindow {
     this.peekPanel = null;
   }
 
-  notify() {
+  notify(change = null, source = null) {
     for (const [id, reference] of this.claimedTabIDs) {
       const tab = reference.deref();
       if (!tab || tab.closing || !this.win.gBrowser.tabs.includes(tab)) {
@@ -678,8 +738,11 @@ class OrbitWindow {
     }
     const tabs = this.listTabs();
     for (const callback of this.listeners) {
+      if (source && callback.document === source) {
+        continue;
+      }
       try {
-        callback(clone(tabs));
+        callback(clone(tabs), clone(change));
       } catch (error) {
         console.error("Orbit tab subscription failed", error);
       }
@@ -714,12 +777,20 @@ class OrbitWindow {
 export const Orbit = {
   _windows: new WeakMap(),
   _widgetCreated: false,
+  _newTabConfigured: false,
 
   init(win) {
     if (!win.gBrowser || this._windows.has(win)) {
       return;
     }
+    if (!this._newTabConfigured) {
+      // Firefox's native commands and initial-page URL bar handling already
+      // consume this service. Use a real packaged tab, not a blank-tab overlay.
+      lazy.AboutNewTab.newTabURL = BOARD_URI;
+      this._newTabConfigured = true;
+    }
     this._windows.set(win, new OrbitWindow(win));
+    lazy.OrbitTheme.init(win);
     lazy.OrbitRadial.init(win);
     if (!this._widgetCreated) {
       lazy.CustomizableUI.createWidget({
@@ -751,6 +822,21 @@ export const Orbit = {
     this._windows.get(win)?.show();
   },
 
+  connectCanvas(canvasWindow) {
+    const document = canvasWindow?.document;
+    if (document?.documentURI !== BOARD_URI || !document.nodePrincipal?.isSystemPrincipal) {
+      throw new Error("Orbit can connect only the packaged canvas document");
+    }
+    const browser = canvasWindow.docShell?.chromeEventHandler;
+    const win = browser?.ownerDocument?.defaultView;
+    if (!win?.gBrowser || browser.contentDocument !== document ||
+        !win.gBrowser.getTabForBrowser(browser)) {
+      throw new Error("Orbit requires a canvas in a native browser tab");
+    }
+    this.init(win);
+    return this._windows.get(win).connectCanvas(document, browser);
+  },
+
   closeBoard(win) {
     this._windows.get(win)?.hide();
   },
@@ -762,6 +848,7 @@ export const Orbit = {
 
   uninit(win) {
     lazy.OrbitRadial.uninit(win);
+    lazy.OrbitTheme.uninit(win);
     this._windows.get(win)?.destroy();
     this._windows.delete(win);
   },

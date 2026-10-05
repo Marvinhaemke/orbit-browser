@@ -18,7 +18,7 @@ CI tests the Windows updater, applies the bundle to a copy of the actual native 
 
 ## Runtime
 
-`browser/components/orbit/Orbit.sys.mjs` is a privileged browser component loaded during Firefox’s delayed window startup. It manages the toolbar entry, keyboard shortcut, canvas lifecycle, and a narrow bridge to native browser operations.
+`browser/components/orbit/Orbit.sys.mjs` is a privileged browser component loaded during Firefox’s delayed window startup. It manages the toolbar entry, keyboard shortcut, canvas lifecycle, and a narrow bridge to native browser operations. Firefox’s `AboutNewTab.newTabURL` routes native new-tab commands to the packaged canvas while preserving its initial-page address-bar behavior.
 
 `browser/base/content/orbit/orbit.html`, `orbit.css`, and `orbit.js` form the spatial canvas. They are packaged as `chrome://browser/content/orbit/` resources. The canvas lives inside Firefox’s own chrome; it is not an extension page or a standalone website.
 
@@ -26,11 +26,15 @@ The canvas bridge manages real `gBrowser` tabs and uses the current native split
 
 Workspace data is stored through Firefox SessionStore custom window values. Tab identities use custom tab values. Private windows keep a separate in-memory workspace. Layout restoration follows session restoration, rather than a cloud account or browser localStorage.
 
+Each native canvas tab receives an immutable bridge bound to its current system-principal document and native browser. Navigation, tab closure, BFCache/discard, and foreign browser ownership revoke privileged access. Toolbar overlays retain their separate exact-document guard. Shared workspace changes notify live canvases without echoing the author’s save.
+
+`OrbitTheme.sys.mjs` installs scoped browser chrome styles. It follows Firefox’s effective theme identity, leaving custom theme colors intact. Native default chrome, radial menus, and the canvas use Orbit’s liquid/sculpted palette with reduced-motion and forced-color support. The branding overlay supplies Orbit’s SVG logo, vector wordmarks, and About styling.
+
 The browser component controls the boundary between the canvas and website content. Website titles and URLs are untrusted text. Canvas actions accept website URLs and explicit native tab identifiers; they must not expose arbitrary evaluation or unrestricted privileged navigation.
 
 `OrbitRadial.sys.mjs` owns a radial-menu controller for each browser window. Trusted pointer events arrive through `OrbitRadialChild` and `OrbitRadialParent` JSWindowActors; the parent validates that their current browsing context belongs to the selected native tab. Held tab wheels stay pointer-transparent so the original webpage receives button release and Firefox can construct the correct link, image, selection, or editing context, including cross-origin frames.
 
-The page wheel snapshots Firefox's initialized `contentAreaContextMenu` and invokes its original commands. It retains the native context descriptor for those commands, suppresses the ordinary popup, and completes its cleanup when the wheel closes. The tab wheel reads native open tabs and tab groups, including internal pages and collapsed groups. `OrbitRadialView.sys.mjs` renders scoped SVG rings, paginates overflowing options recursively, and handles hover, keyboard input, animation, viewport bounds, and reduced motion. Website text is rendered as text, and content messages cannot supply privileged commands or menu definitions.
+The page wheel snapshots Firefox's initialized `contentAreaContextMenu` and invokes its original commands. It retains the native context descriptor for those commands, suppresses the ordinary popup, and completes its cleanup when the wheel closes. The tab wheel reads native open tabs and tab groups, including internal pages and collapsed groups. `OrbitRadialView.sys.mjs` renders scoped SVG rings with child fans anchored to each actual parent sector, hit-tests only their painted angular bounds, paginates overflowing options recursively, and handles hover, keyboard input, animation, viewport bounds, and reduced motion. Website text is rendered as text, and content messages cannot supply privileged commands or menu definitions.
 
 `scripts/smoke_radial.py` exercises physical right-button down/up gestures against the packaged native browser, checks real command effects and group expansion, and captures light and dark screenshots. CI repeats these checks after applying the interface update to an existing installation.
 

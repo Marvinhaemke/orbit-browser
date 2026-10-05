@@ -22,7 +22,9 @@ const tabs = new WeakMap();
 const browserWindows = new Set();
 let widgetProperties;
 const modules = {
+  AboutNewTab: { newTabURL: "about:newtab" },
   OrbitRadial: { init() {}, uninit() {} },
+  OrbitTheme: { init() {}, uninit() {} },
   PrivateBrowsingUtils: { isWindowPrivate: win => win.private },
   ContextualIdentityService: { getPublicIdentityFromId: id => id === 2 ? { userContextId: 2 } : null },
   CustomizableUI: {
@@ -102,7 +104,7 @@ function createWindow(isPrivate = false) {
   browserWindows.add(win);
   if (widgetProperties) attachWidget(win);
   new Node(win.document).id = "browser";
-  const nativeBrowser = url => ({ currentURI: uri(url), contentPrincipal: { isSystemPrincipal: false }, referrerInfo: {}, focus() {} });
+  const nativeBrowser = url => ({ ownerDocument: win.document, currentURI: uri(url), contentPrincipal: { isSystemPrincipal: false }, referrerInfo: {}, focus() { this.focused = true; } });
   const first = { label: "Example", userContextId: 0, linkedBrowser: nativeBrowser("https://example.com/"), pinned: false };
   let selected = first;
   win.gBrowser = {
@@ -111,6 +113,7 @@ function createWindow(isPrivate = false) {
     get selectedTab() { return selected; },
     set selectedTab(tab) { selected = tab; this.tabContainer.dispatchEvent(new Event("TabSelect")); },
     get selectedBrowser() { return selected.linkedBrowser; },
+    getTabForBrowser(browser) { return this.tabs.find(tab => tab.linkedBrowser === browser); },
     addTab(url, options) {
       assert.equal(options.allowInheritPrincipal, false);
       assert.equal(options.triggeringPrincipal.isSystemPrincipal, false);
@@ -136,7 +139,26 @@ function createWindow(isPrivate = false) {
       return browser;
     },
   };
+  win.gURLBar = { focused: false, select() { this.focused = true; } };
   return win;
+}
+
+function createCanvasTab(win) {
+  const browser = {
+    ownerDocument: win.document,
+    currentURI: uri("chrome://browser/content/orbit/orbit.html"),
+    browsingContext: { currentWindowGlobal: { isCurrentGlobal: true } },
+    focus() {},
+  };
+  const canvas = {
+    document: { documentURI: browser.currentURI.spec, nodePrincipal: { isSystemPrincipal: true } },
+    docShell: { chromeEventHandler: browser },
+  };
+  canvas.document.defaultView = canvas;
+  browser.contentDocument = canvas.document;
+  const tab = { label: "Orbit Canvas", linkedBrowser: browser, userContextId: 0 };
+  win.gBrowser.tabs.push(tab);
+  return { canvas, browser, tab };
 }
 
 const source = await readFile(new URL("../overlay/browser/components/orbit/Orbit.sys.mjs", import.meta.url), "utf8");
@@ -153,6 +175,7 @@ const board = () => ({
 test("native toolbar command opens and closes the canvas in the button's own window", () => {
   const win = createWindow();
   Orbit.init(win);
+  assert.equal(modules.AboutNewTab.newTabURL, "chrome://browser/content/orbit/orbit.html", "native new-tab service routes to the real canvas document");
   const button = win.document.getElementById("orbit-canvas-button");
   assert.equal(button.ownerGlobal, undefined, "the removed Gecko API must not exist in the test");
   assert.equal(button.attributes.image, "chrome://browser/content/orbit/orbit.svg");
@@ -170,6 +193,128 @@ test("native toolbar command opens and closes the canvas in the button's own win
   assert.equal(second.document.getElementById("orbit-canvas-overlay").hidden, false);
   assert.equal(win.document.getElementById("orbit-canvas-overlay").hidden, true);
   Orbit.uninit(second);
+  Orbit.uninit(win);
+});
+
+test("native new-tab canvas connects without creating an overlay or taking URL bar focus", () => {
+  const win = createWindow();
+  const { canvas, browser, tab } = createCanvasTab(win);
+  win.gBrowser.selectedTab = tab;
+  win.gURLBar.focused = true;
+  const bridge = Orbit.connectCanvas(canvas);
+  assert.equal(Orbit.connectCanvas(canvas), bridge, "one bridge belongs to each document");
+  assert.equal(win.document.getElementById("orbit-canvas-overlay"), undefined);
+  assert.equal(browser.currentURI.spec, "chrome://browser/content/orbit/orbit.html");
+  assert.equal(win.gURLBar.focused, true);
+  assert.equal(bridge.listTabs().length, 1, "canvas documents are not imported as website cards");
+  bridge.saveBoard(board());
+  assert.equal(bridge.getBoard().items[0].url, "https://www.mozilla.org/");
+  const result = bridge.openTab({ url: "https://www.mozilla.org/", userContextId: 2 });
+  assert.equal(win.gBrowser.selectedBrowser.currentURI.spec, result.url);
+  assert.equal(win.gBrowser.selectedTab.options.userContextId, 2);
+  assert.equal(bridge.getBoard().version, 1, "background canvas document remains authorized after TabSelect");
+  Orbit.uninit(win);
+  assert.throws(() => bridge.getBoard(), /packaged canvas/);
+});
+
+test("multiple native canvases and the toolbar canvas share board edits without echoing the author", () => {
+  const win = createWindow();
+  Orbit.openBoard(win);
+  const first = createCanvasTab(win);
+  const second = createCanvasTab(win);
+  const a = Orbit.connectCanvas(first.canvas);
+  const b = Orbit.connectCanvas(second.canvas);
+  const changes = [[], [], []];
+  a.subscribe((list, change) => changes[0].push(change));
+  b.subscribe((list, change) => changes[1].push(change));
+  win.OrbitChrome.subscribe((list, change) => changes[2].push(change));
+  a.saveBoard(board());
+  assert.equal(changes[0].length, 0);
+  assert.equal(changes[1][0].type, "board-changed");
+  assert.equal(changes[2][0].board.items[0].url, "https://www.mozilla.org/");
+  changes[1][0].board.items[0].title = "Mutation stays local";
+  assert.equal(b.getBoard().items[0].title, "Mozilla");
+  const edited = b.getBoard();
+  edited.frames[0].title = "Connected workspace";
+  b.saveBoard(edited);
+  assert.equal(a.getBoard().frames[0].title, "Connected workspace");
+  assert.equal(changes[0][0].board.frames[0].title, "Connected workspace");
+  assert.equal(changes[1].length, 1, "author does not receive its own save");
+  assert.equal(changes[2].length, 2);
+  Orbit.uninit(win);
+});
+
+test("native canvas bridges reject stale, discarded, foreign and non-system documents", () => {
+  const win = createWindow();
+  const { canvas, browser, tab } = createCanvasTab(win);
+  const bridge = Orbit.connectCanvas(canvas);
+  let notifications = 0;
+  bridge.subscribe(() => notifications++);
+  canvas.document.nodePrincipal.isSystemPrincipal = false;
+  assert.throws(() => bridge.getBoard(), /packaged canvas/);
+  assert.throws(() => Orbit.connectCanvas(canvas), /packaged canvas/);
+  canvas.document.nodePrincipal.isSystemPrincipal = true;
+  for (const flag of ["isInBFCache", "isDiscarded"]) {
+    browser.browsingContext.currentWindowGlobal[flag] = true;
+    assert.throws(() => bridge.listTabs(), /current native canvas/);
+    browser.browsingContext.currentWindowGlobal[flag] = false;
+  }
+  browser.contentDocument = { ...canvas.document };
+  assert.throws(() => bridge.saveBoard(board()), /current native canvas/);
+  assert.throws(() => Orbit.connectCanvas(canvas), /native browser tab/);
+  browser.contentDocument = canvas.document;
+  browser.currentURI = uri("https://example.com/");
+  assert.throws(() => bridge.getBoard(), /current native canvas/);
+  browser.currentURI = uri("chrome://browser/content/orbit/orbit.html");
+  const second = createWindow();
+  browser.ownerDocument = second.document;
+  assert.throws(() => bridge.getBoard(), /current native canvas/);
+  browser.ownerDocument = win.document;
+  tab.closing = true;
+  assert.throws(() => bridge.getBoard(), /current native canvas/);
+  win.gBrowser.tabContainer.dispatchEvent(new Event("TabClose"));
+  assert.equal(notifications, 0, "stale subscriptions are revoked before callback delivery");
+  Orbit.uninit(win);
+});
+
+test("private native canvases share memory only and isolate normal and other private windows", () => {
+  const win = createWindow(true);
+  const a = Orbit.connectCanvas(createCanvasTab(win).canvas);
+  const b = Orbit.connectCanvas(createCanvasTab(win).canvas);
+  const normal = createWindow();
+  const otherPrivate = createWindow(true);
+  const normalBridge = Orbit.connectCanvas(createCanvasTab(normal).canvas);
+  const otherBridge = Orbit.connectCanvas(createCanvasTab(otherPrivate).canvas);
+  const before = { reads, writes };
+  const value = board();
+  value.items[0].userContextId = 0;
+  a.saveBoard(value);
+  a.listTabs();
+  assert.equal(b.getBoard().frames[0].title, "Research");
+  assert.equal(otherBridge.getBoard(), null);
+  assert.deepEqual({ reads, writes }, before);
+  assert.equal(normalBridge.getBoard(), null);
+  Orbit.uninit(win);
+  assert.throws(() => b.getBoard(), /packaged canvas/);
+  Orbit.uninit(normal);
+  Orbit.uninit(otherPrivate);
+});
+
+test("return from a native canvas selects an existing page and retains canvas tabs", () => {
+  const win = createWindow();
+  const { canvas, tab } = createCanvasTab(win);
+  const first = win.gBrowser.tabs[0];
+  win.gBrowser.selectedTab = tab;
+  const bridge = Orbit.connectCanvas(canvas);
+  bridge.hideCanvas();
+  assert.equal(win.gBrowser.selectedTab, first);
+  assert.equal(first.linkedBrowser.focused, true);
+  assert.equal(win.gBrowser.tabs.length, 2);
+  win.gBrowser.tabs = [tab];
+  win.gBrowser.selectedTab = tab;
+  bridge.hideCanvas();
+  assert.equal(win.gBrowser.selectedTab, tab);
+  assert.equal(win.gURLBar.focused, true);
   Orbit.uninit(win);
 });
 

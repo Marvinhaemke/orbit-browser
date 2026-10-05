@@ -1,0 +1,42 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+
+@media not (forced-colors: active) {
+  #aboutDialogContainer {
+    background:
+      radial-gradient(ellipse at 12% 15%, #70ded320, transparent 58%),
+      radial-gradient(ellipse at 95% 8%, #8c86f417, transparent 48%),
+      linear-gradient(145deg, #20313d, #14222c 72%);
+    color: #e9f7f8;
+    color-scheme: dark;
+  }
+
+  #bottomBox {
+    background: #101c267a;
+    border-top: 1px solid #c8f4ed12;
+    box-shadow: inset 0 1px 0 #ffffff05;
+  }
+}
+
+#leftBox {
+  background-image: url("chrome://branding/content/about-logo.svg");
+  background-size: 192px 192px;
+}
+
+#rightBox {
+  background-size: auto 52px;
+  margin-inline: 30px;
+  padding-top: 72px;
+}
+
+#bottomBox {
+  padding: 15px 10px;
+}
+
+@media (forced-colors: active) {
+  #aboutDialogContainer {
+    background: Canvas;
+    color: CanvasText;
+  }
+}

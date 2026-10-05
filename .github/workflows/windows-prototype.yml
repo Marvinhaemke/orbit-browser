@@ -451,7 +451,9 @@ jobs:
           cat > release-notes.md <<'EOF'
           Close Orbit, then run Update-Orbit.cmd to test the latest verified interface.
 
-          Quick right-click on a webpage opens Orbit's radial page actions. Open in new tab is in the center. Hover a submenu to reveal an outer ring. Hold the right button to explore open tabs, hover a tab, then release to switch; tab groups and More open further rings.
+          Quick right-click on a webpage opens Orbit's radial page actions. Open in new tab is in the center. Hover a submenu to reveal a fan beside its parent item. Hold the right button to explore open tabs, hover a tab, then release to switch; tab groups and More open further rings.
+
+          Every new tab opens the shared spatial canvas. Orbit now has its own moonstone/mineral-ink appearance, lagoon accents, orbital artwork, and sculpted controls with fluid motion.
 
           For an existing installation, download Orbit-Update-Setup.zip and extract its two files beside orbit.exe once. Future interface changes download only the small UI package; your existing profile and Gecko engine are kept.
 

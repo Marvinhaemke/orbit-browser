@@ -1,0 +1,244 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+
+/* The root belongs to browser.xhtml, never to a website document. An explicit
+   Firefox theme keeps its appearance; Orbit supplies the default identity. */
+:root.orbit-browser-chrome[data-orbit-theme="default"] {
+  --orbit-chrome-base: #e9eef5;
+  --orbit-chrome-raised: #f5f8fc;
+  --orbit-chrome-recessed: #dfe6ef;
+  --orbit-chrome-ink: #253247;
+  --orbit-chrome-muted: #53647b;
+  --orbit-chrome-line: #536b8c26;
+  --orbit-chrome-shadow: #99acc14a;
+  --orbit-chrome-highlight: #ffffffc9;
+  --orbit-chrome-lagoon: #70ded3;
+  --orbit-chrome-lagoon-ink: #12665f;
+  --orbit-chrome-periwinkle: #8c86f4;
+  --orbit-chrome-ease: cubic-bezier(.2,.8,.25,1);
+  --lwt-accent-color: var(--orbit-chrome-base) !important;
+  --lwt-text-color: var(--orbit-chrome-ink) !important;
+  --toolbar-background-color: var(--orbit-chrome-base) !important;
+  --toolbar-text-color: var(--orbit-chrome-ink) !important;
+  --toolbar-field-background-color: var(--orbit-chrome-recessed) !important;
+  --toolbar-field-background-color-focus: var(--orbit-chrome-raised) !important;
+  --toolbar-field-text-color: var(--orbit-chrome-ink) !important;
+  --toolbar-field-text-color-focus: var(--orbit-chrome-ink) !important;
+  --toolbar-field-border-color: transparent !important;
+  --toolbar-field-border-color-focus: var(--orbit-chrome-lagoon-ink) !important;
+  --toolbarbutton-icon-fill: var(--orbit-chrome-ink) !important;
+  --toolbarbutton-icon-fill-attention: var(--orbit-chrome-lagoon-ink) !important;
+  --toolbarbutton-hover-background: #7c96b01b !important;
+  --toolbarbutton-active-background: #70ded32c !important;
+  --tab-selected-bgcolor: var(--orbit-chrome-raised) !important;
+  --tab-selected-textcolor: var(--orbit-chrome-ink) !important;
+  --tab-line-color: var(--orbit-chrome-lagoon-ink) !important;
+  --urlbarView-highlight-background: #70ded329 !important;
+  --urlbarView-highlight-color: var(--orbit-chrome-ink) !important;
+  --panel-background-color: var(--orbit-chrome-raised) !important;
+  --panel-text-color: var(--orbit-chrome-ink) !important;
+  --panel-border-color: var(--orbit-chrome-line) !important;
+  --arrowpanel-background: var(--orbit-chrome-raised) !important;
+  --arrowpanel-color: var(--orbit-chrome-ink) !important;
+  --arrowpanel-border-color: var(--orbit-chrome-line) !important;
+  --arrowpanel-border-radius: 18px;
+  --sidebar-background-color: var(--orbit-chrome-base) !important;
+  --sidebar-text-color: var(--orbit-chrome-ink) !important;
+}
+
+:root.orbit-browser-chrome[data-orbit-theme="default"] #navigator-toolbox {
+  background: radial-gradient(ellipse at 77% 0%, #70ded323, transparent 53%),
+    linear-gradient(155deg, var(--orbit-chrome-raised), var(--orbit-chrome-base) 65%) !important;
+  border-bottom: 1px solid var(--orbit-chrome-line) !important;
+  box-shadow: 0 1px 0 var(--orbit-chrome-highlight);
+  color: var(--orbit-chrome-ink);
+}
+
+:root.orbit-browser-chrome[data-orbit-theme="default"] :is(#TabsToolbar, #nav-bar, #PersonalToolbar) {
+  background-color: transparent !important;
+  background-image: none !important;
+  color: var(--orbit-chrome-ink) !important;
+  box-shadow: none !important;
+  border-color: transparent !important;
+}
+
+:root.orbit-browser-chrome[data-orbit-theme="default"] #nav-bar {
+  padding-block: 3px 5px;
+}
+
+:root.orbit-browser-chrome[data-orbit-theme="default"] .tab-background {
+  border-radius: 15px !important;
+  margin-block: 5px !important;
+  transition: background-color 180ms var(--orbit-chrome-ease),
+    box-shadow 220ms var(--orbit-chrome-ease);
+}
+
+:root.orbit-browser-chrome[data-orbit-theme="default"] .tab-background[selected] {
+  background: linear-gradient(140deg, var(--orbit-chrome-highlight), var(--orbit-chrome-raised)) !important;
+  box-shadow: 4px 4px 10px var(--orbit-chrome-shadow),
+    -3px -3px 8px var(--orbit-chrome-highlight),
+    inset 0 1px 0 var(--orbit-chrome-highlight) !important;
+  outline: 1px solid var(--orbit-chrome-highlight);
+  outline-offset: -1px;
+}
+
+:root.orbit-browser-chrome[data-orbit-theme="default"] .tabbrowser-tab:not([selected]):hover .tab-background {
+  background: #70ded31c !important;
+  box-shadow: inset 1px 1px 3px var(--orbit-chrome-shadow),
+    inset -1px -1px 3px var(--orbit-chrome-highlight);
+}
+
+:root.orbit-browser-chrome[data-orbit-theme="default"] :is(#nav-bar, #TabsToolbar) .toolbarbutton-1 >
+:is(.toolbarbutton-icon, .toolbarbutton-badge-stack) {
+  border-radius: 12px !important;
+  transition: background-color 160ms var(--orbit-chrome-ease),
+    box-shadow 180ms var(--orbit-chrome-ease), color 160ms ease;
+}
+
+:root.orbit-browser-chrome[data-orbit-theme="default"] :is(#nav-bar, #TabsToolbar)
+.toolbarbutton-1:not([disabled]):hover > :is(.toolbarbutton-icon, .toolbarbutton-badge-stack) {
+  background-color: var(--orbit-chrome-raised) !important;
+  box-shadow: 2px 2px 5px var(--orbit-chrome-shadow),
+    -2px -2px 5px var(--orbit-chrome-highlight);
+}
+
+:root.orbit-browser-chrome[data-orbit-theme="default"] :is(#nav-bar, #TabsToolbar)
+.toolbarbutton-1:not([disabled]):is(:active, [open]) > :is(.toolbarbutton-icon, .toolbarbutton-badge-stack) {
+  background-color: var(--orbit-chrome-recessed) !important;
+  box-shadow: inset 2px 2px 4px var(--orbit-chrome-shadow),
+    inset -2px -2px 4px var(--orbit-chrome-highlight);
+}
+
+:root.orbit-browser-chrome[data-orbit-theme="default"] #orbit-canvas-button {
+  color: var(--orbit-chrome-lagoon-ink) !important;
+  --toolbarbutton-icon-fill: var(--orbit-chrome-lagoon-ink);
+}
+
+:root.orbit-browser-chrome[data-orbit-theme="default"] #urlbar-background {
+  border-radius: 18px !important;
+  border: 1px solid var(--orbit-chrome-line) !important;
+  background: var(--orbit-chrome-recessed) !important;
+  box-shadow: inset 3px 3px 7px var(--orbit-chrome-shadow),
+    inset -3px -3px 7px var(--orbit-chrome-highlight) !important;
+  transition: background-color 180ms var(--orbit-chrome-ease),
+    box-shadow 220ms var(--orbit-chrome-ease), border-color 180ms ease;
+}
+
+:root.orbit-browser-chrome[data-orbit-theme="default"] #urlbar:is([focused], [open]) > #urlbar-background {
+  background: var(--orbit-chrome-raised) !important;
+  border-color: var(--orbit-chrome-lagoon-ink) !important;
+  box-shadow: 0 0 0 2px #70ded32b,
+    5px 7px 20px var(--orbit-chrome-shadow),
+    inset 0 1px 0 var(--orbit-chrome-highlight) !important;
+}
+
+:root.orbit-browser-chrome[data-orbit-theme="default"] :is(.urlbarView-row-inner, .urlbarView-button) {
+  border-radius: 12px;
+}
+
+:root.orbit-browser-chrome[data-orbit-theme="default"] :is(#sidebar-main, #sidebar-box, #sidebar-header) {
+  background: var(--orbit-chrome-base) !important;
+  color: var(--orbit-chrome-ink) !important;
+  border-color: var(--orbit-chrome-line) !important;
+}
+
+:root.orbit-browser-chrome[data-orbit-theme="default"] #sidebar-splitter {
+  border-color: var(--orbit-chrome-line) !important;
+}
+
+:root.orbit-browser-chrome[data-orbit-theme="default"] :is(.tab-close-button, .urlbar-icon, .identity-box-button) {
+  border-radius: 10px;
+}
+
+:root.orbit-browser-chrome[data-orbit-theme="default"] #orbit-canvas-overlay {
+  background: var(--orbit-chrome-base) !important;
+}
+
+:root.orbit-browser-chrome[data-orbit-theme="default"] #orbit-peek-panel {
+  background: var(--orbit-chrome-raised) !important;
+  border-color: var(--orbit-chrome-line) !important;
+  border-radius: 24px !important;
+  box-shadow: 12px 18px 60px var(--orbit-chrome-shadow),
+    inset 0 1px 0 var(--orbit-chrome-highlight) !important;
+  animation: orbit-chrome-surface-in 220ms var(--orbit-chrome-ease);
+}
+
+:root.orbit-browser-chrome[data-orbit-theme="default"] #orbit-peek-panel > div {
+  background: var(--orbit-chrome-base) !important;
+  color: var(--orbit-chrome-ink);
+}
+
+:root.orbit-browser-chrome[data-orbit-theme="default"] #orbit-peek-panel > div > button {
+  background: var(--orbit-chrome-raised) !important;
+  color: var(--orbit-chrome-ink) !important;
+  border-color: var(--orbit-chrome-line) !important;
+  border-radius: 12px !important;
+  box-shadow: 2px 2px 5px var(--orbit-chrome-shadow),
+    -2px -2px 5px var(--orbit-chrome-highlight);
+  transition: box-shadow 160ms ease, border-color 160ms ease;
+}
+
+:root.orbit-browser-chrome[data-orbit-theme="default"] #orbit-peek-panel > div > button:hover {
+  border-color: var(--orbit-chrome-lagoon-ink) !important;
+}
+
+:root.orbit-browser-chrome[data-orbit-theme="default"] #orbit-peek-panel > div > button:active {
+  box-shadow: inset 2px 2px 4px var(--orbit-chrome-shadow),
+    inset -2px -2px 4px var(--orbit-chrome-highlight);
+}
+
+@keyframes orbit-chrome-surface-in {
+  from { opacity: 0; transform: translateY(5px) scale(.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root.orbit-browser-chrome[data-orbit-theme="default"] {
+    --orbit-chrome-base: #151b2c;
+    --orbit-chrome-raised: #202a3f;
+    --orbit-chrome-recessed: #111827;
+    --orbit-chrome-ink: #e5edf8;
+    --orbit-chrome-muted: #9aaac0;
+    --orbit-chrome-line: #aec8e821;
+    --orbit-chrome-shadow: #070c18a3;
+    --orbit-chrome-highlight: #50658024;
+    --orbit-chrome-lagoon-ink: #70ded3;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root.orbit-browser-chrome[data-orbit-theme="default"] :is(.tab-background,
+    .toolbarbutton-icon, .toolbarbutton-badge-stack, #urlbar-background,
+    #orbit-peek-panel, #orbit-peek-panel > div > button) {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+@media (forced-colors: active) {
+  :root.orbit-browser-chrome[data-orbit-theme="default"] {
+    --orbit-chrome-base: Canvas;
+    --orbit-chrome-raised: Canvas;
+    --orbit-chrome-recessed: Canvas;
+    --orbit-chrome-ink: CanvasText;
+    --orbit-chrome-muted: CanvasText;
+    --orbit-chrome-line: ButtonText;
+    --orbit-chrome-shadow: transparent;
+    --orbit-chrome-highlight: transparent;
+    --orbit-chrome-lagoon-ink: LinkText;
+    --urlbarView-highlight-background: Highlight !important;
+    --urlbarView-highlight-color: HighlightText !important;
+  }
+  :root.orbit-browser-chrome[data-orbit-theme="default"] #navigator-toolbox {
+    background: Canvas !important;
+  }
+  :root.orbit-browser-chrome[data-orbit-theme="default"] :is(.tab-background,
+    .toolbarbutton-icon, .toolbarbutton-badge-stack, #urlbar-background) {
+    box-shadow: none !important;
+  }
+  :root.orbit-browser-chrome[data-orbit-theme="default"] .tab-background[selected] {
+    background: Canvas !important;
+    outline: 1px solid Highlight;
+  }
+}
