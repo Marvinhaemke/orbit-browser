@@ -220,7 +220,9 @@ def verify_native_newtab_ux(driver, fixture_handle, url, result, folder):
     ''', "packaged default Orbit browser theme")
     assert identity
     result["brand"] = driver.execute_script('''
-        return {name: Services.appinfo.name,
+        return {name: Services.strings.createBundle("chrome://branding/locale/brand.properties")
+                .GetStringFromName("brandShortName"),
+            engineName: Services.appinfo.name,
             theme: Services.prefs.getStringPref("extensions.activeThemeID", ""),
             sheet: document.getElementById("orbit-chrome-styles").href,
             lagoon: getComputedStyle(document.documentElement).getPropertyValue("--orbit-chrome-lagoon").trim(),
