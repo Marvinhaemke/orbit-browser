@@ -134,8 +134,20 @@ def right_click(driver, element):
     pointer(driver).pointer_move(point["x"], point["y"], origin="viewport").click(button=2).perform()
 
 
-def left_click(driver, element):
-    pointer(driver).click(element).perform()
+def left_click(driver, node_id):
+    """Click a live chrome hit point without retaining a replaceable DOM node."""
+    point = driver.execute_script('''
+        const node = document.getElementById(arguments[0]);
+        if (!node) throw new Error("Native chrome action is missing: " + arguments[0]);
+        const box = node.getBoundingClientRect();
+        if (!box.width || !box.height) throw new Error("Native chrome action is hidden: " + arguments[0]);
+        return {x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2)};
+    ''', script_args=[node_id])
+    # Firefox localization and native-menu mutation can refresh the radial
+    # between FindElement and PerformActions, replacing its center button.
+    # Absolute widget coordinates target the currently rendered native chrome
+    # without an element-origin reference becoming stale during deserialization.
+    pointer(driver).pointer_move(point["x"], point["y"], origin="viewport").click().perform()
 
 
 def radial_state(driver):
@@ -598,7 +610,7 @@ def run_checks(driver, handle, url, result, folder):
     page_menu(driver, handle)
     before = native_tab_count(driver)
     expected = url + "opened-top"
-    left_click(driver, driver.find_element(By.ID, CENTER_ID))
+    left_click(driver, CENTER_ID)
     wait_for(driver, "return gBrowser.tabs.length === arguments[0] + 1;", "context center creates one native tab", [before])
     wait_for(driver, "return [...gBrowser.tabs].some(tab => tab.linkedBrowser.currentURI.spec === arguments[0]);", "context center loads the real link", [expected])
     assert_context_cleanup(driver)
@@ -644,7 +656,7 @@ def run_checks(driver, handle, url, result, folder):
     wait_clipboard(driver, iframe_link)
     assert_context_cleanup(driver)
     page_menu(driver, handle, frame=True)
-    left_click(driver, driver.find_element(By.ID, CENTER_ID))
+    left_click(driver, CENTER_ID)
     wait_for(driver, "return [...gBrowser.tabs].some(tab => tab.linkedBrowser.currentURI.spec === arguments[0]);", "remote-frame link opens in a real native tab", [iframe_link])
     assert_context_cleanup(driver)
     checks.append("Remote iframe right-click preserves actor ownership for clipboard and native tab commands")
@@ -822,7 +834,7 @@ def run_checks(driver, handle, url, result, folder):
     assert_context_cleanup(driver)
     page_menu(driver, handle)
     # A real navigation-bar click lies outside the content wheel.
-    left_click(driver, driver.find_element(By.ID, "urlbar-input"))
+    left_click(driver, "urlbar-input")
     assert_context_cleanup(driver)
     checks.append("Escape and a trusted outside click dismiss the native radial without a fallback popup")
     result["final_state"] = radial_state(driver)
