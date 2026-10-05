@@ -345,8 +345,18 @@ def select_fixture(driver, handle):
     driver.set_context("content")
     wait_for(driver, '''
         return !!document.getElementById("fixture-proof") &&
-            document.visibilityState === "visible" && document.hasFocus();
-    ''', "fixture tab is visible and focused")
+            document.visibilityState === "visible";
+    ''', "fixture tab is visible")
+    # Marionette's browser.focus() runs after TabSelect, before the async tab
+    # switch can finish adjusting focus. Establish focus with one real primary
+    # click on an inert target after the visible browser is ready
+    # before the tested right-button gesture. Keep existing focused fields and
+    # selections intact when the content document already has focus.
+    if not driver.execute_script("return document.hasFocus();"):
+        point = content_point_in_chrome(driver, driver.find_element(By.ID, "blank-target"))
+        pointer(driver).pointer_move(point["x"], point["y"], origin="viewport").click().perform()
+        driver.set_context("content")
+    wait_for(driver, "return document.hasFocus();", "trusted setup click focuses the visible fixture")
 
 
 def set_theme(driver, dark):
@@ -448,6 +458,9 @@ def main():
                     const switcher = gBrowser._switcher;
                     return {selectedURI: gBrowser.selectedBrowser.currentURI.spec,
                         selectedTab: gBrowser.selectedTab.label, activeWindow: Services.focus.activeWindow === window,
+                        activeElement: document.activeElement?.localName, activeElementId: document.activeElement?.id,
+                        focusedElement: Services.focus.focusedElement?.localName,
+                        focusedElementId: Services.focus.focusedElement?.id,
                         switching: switcher?.switchInProgress, paintId: switcher?.switchPaintId,
                         visibleTab: switcher?.visibleTab?.label, requestedTab: switcher?.requestedTab?.label};
                 ''')
@@ -455,6 +468,7 @@ def main():
                 driver.switch_to_frame()
                 result["failure_content_input"] = driver.execute_script('''
                     return {uri: location.href, visible: document.visibilityState, focused: document.hasFocus(),
+                        activeElement: document.activeElement?.localName, activeElementId: document.activeElement?.id,
                         screenX: window.mozInnerScreenX, screenY: window.mozInnerScreenY,
                         events: window.orbitSmokeInputEvents || []};
                 ''')

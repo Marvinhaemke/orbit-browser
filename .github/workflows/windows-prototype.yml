@@ -68,50 +68,145 @@ jobs:
           node tests/radial-native.test.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Find a tested browser with matching native source
+      - name: Find tested installation and matching internal native candidate
         id: baseline
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
             const { owner, repo } = context.repo;
-            const { data } = await github.rest.actions.listArtifactsForRepo({ owner, repo, per_page: 100 });
-            const previous = data.artifacts.find(artifact =>
-              artifact.name === 'Orbit-Windows-x64' && !artifact.expired &&
+            const workflow = '.github/workflows/windows-prototype.yml';
+            const artifacts = await github.paginate(github.rest.actions.listArtifactsForRepo, { owner, repo, per_page: 100 });
+            const eligible = artifact => !artifact.expired &&
               artifact.workflow_run?.head_branch === 'main' &&
-              artifact.workflow_run?.head_repository_id === context.payload.repository.id);
+              artifact.workflow_run?.head_repository_id === context.payload.repository.id;
+            const runs = new Map();
+            const trustedRun = async artifact => {
+              const id = artifact.workflow_run.id;
+              if (!runs.has(id)) runs.set(id, (await github.rest.actions.getWorkflowRun({ owner, repo, run_id: id })).data);
+              const run = runs.get(id);
+              return run.status === 'completed' && run.path === workflow && run.head_branch === 'main' &&
+                ['push', 'workflow_dispatch'].includes(run.event) &&
+                run.repository.id === context.payload.repository.id &&
+                run.head_repository.id === context.payload.repository.id &&
+                run.head_sha === artifact.workflow_run.head_sha ? run : null;
+            };
+            let previous;
+            for (const artifact of artifacts.filter(a => a.name === 'Orbit-Windows-x64' && eligible(a))) {
+              const run = await trustedRun(artifact);
+              if (run?.conclusion === 'success') { previous = artifact; break; }
+            }
+            // This public baseline remains independent of internal native reuse.
             core.setOutput('run_id', previous?.workflow_run.id || '');
             core.setOutput('reuse', 'false');
-            if (!previous) return;
-            core.info(`Testing the installed browser from run ${previous.workflow_run.id}`);
-            const run = await github.rest.actions.getWorkflowRun({ owner, repo, run_id: previous.workflow_run.id });
-            if (run.data.conclusion !== 'success') return;
-            const comparison = await github.rest.repos.compareCommitsWithBasehead({
-              owner, repo, basehead: `${previous.workflow_run.head_sha}...${context.sha}`
-            });
-            const files = comparison.data.files;
-            if (!files || files.length >= 300 || !['ahead', 'identical'].includes(comparison.data.status)) return;
-            const nativeInput = /^(overlay\/|configs\/|firefox-source\.json$|scripts\/(build\.py|prepare_source\.py|windows-build\.sh)$)/;
-            if (files.some(file => nativeInput.test(file.filename) || nativeInput.test(file.previous_filename || ''))) return;
-            const prior = await github.rest.repos.getContent({
-              owner, repo, path: '.github/workflows/windows-prototype.yml', ref: previous.workflow_run.head_sha
-            });
-            const before = Buffer.from(prior.data.content, 'base64').toString('utf8').replace(/\r\n/g, '\n');
-            const current = fs.readFileSync('.github/workflows/windows-prototype.yml', 'utf8').replace(/\r\n/g, '\n');
+            if (previous) core.info(`Testing updates against the public browser from run ${previous.workflow_run.id}`);
+            const current = fs.readFileSync(workflow, 'utf8').replace(/\r\n/g, '\n');
             const env = text => text.match(/\n    env:\n([\s\S]*?)\n    steps:/)?.[1];
+            const runner = text => text.match(/\n    runs-on: ([^\n]+)/)?.[1];
             const build = text => text.match(/^      - name: Build pinned Gecko with Orbit native UI\n[\s\S]*?        run: \|\n([\s\S]*?)(?=\n      - name:)/m)?.[1];
-            if (!env(before) || !build(before) || env(before) !== env(current) || build(before) !== build(current)) return;
-            core.setOutput('reuse', 'true');
-            core.info('Native source, configuration, build environment, and build command match the tested artifact.');
+            const nativeInput = /^(overlay\/|configs\/|firefox-source\.json$|scripts\/(build\.py|prepare_source\.py|windows-build\.sh)$)/;
+            const candidates = artifacts.filter(a => a.name === 'Orbit-Windows-native-candidate' && eligible(a));
+            if (previous) candidates.push(previous);
+            for (const artifact of candidates) {
+              const run = await trustedRun(artifact);
+              if (!run) continue;
+              const comparison = await github.rest.repos.compareCommitsWithBasehead({
+                owner, repo, basehead: `${run.head_sha}...${context.sha}`, per_page: 100, page: 1
+              });
+              // GitHub returns changed files only on the first page, capped at 300.
+              // Refuse that cap rather than infer that an incomplete comparison matches.
+              const files = comparison.data.files;
+              if (!files || files.length >= 300 || !['ahead', 'identical'].includes(comparison.data.status)) continue;
+              if (files.some(file => nativeInput.test(file.filename) || nativeInput.test(file.previous_filename || ''))) continue;
+              const prior = await github.rest.repos.getContent({ owner, repo, path: workflow, ref: run.head_sha });
+              if (prior.data.type !== 'file' || prior.data.encoding !== 'base64') continue;
+              const before = Buffer.from(prior.data.content, 'base64').toString('utf8').replace(/\r\n/g, '\n');
+              if (!env(before) || !build(before) || runner(before) !== runner(current) ||
+                  env(before) !== env(current) || build(before) !== build(current)) continue;
+              const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, { owner, repo, run_id: run.id, filter: 'latest', per_page: 100 });
+              const required = [
+                'Package native portable browser',
+                'Verify real native tabs and Orbit canvas in the packaged browser',
+                'Verify native radial page actions and held tab switching'
+              ];
+              const internal = artifact.name === 'Orbit-Windows-native-candidate';
+              if (internal) required.push('Record internal native candidate provenance', 'Upload internal verified native candidate');
+              const job = jobs.find(job => job.name === 'Build and verify native Orbit (Windows x64)' &&
+                required.every(name => job.steps?.some(step => step.name === name && step.conclusion === 'success')));
+              if (!job) continue;
+              core.setOutput('reuse', 'true');
+              core.setOutput('reuse_run_id', run.id);
+              core.setOutput('reuse_artifact_id', artifact.id);
+              core.setOutput('reuse_head_sha', run.head_sha);
+              core.setOutput('reuse_run_attempt', job.run_attempt);
+              core.setOutput('reuse_kind', internal ? 'candidate' : 'public');
+              core.info(`Native source, build environment and command match verified ${internal ? 'internal candidate' : 'public browser'} from run ${run.id}. Fresh and updated runtime checks will run again.`);
+              break;
+            }
 
       - name: Reuse the matching verified native browser
-        if: steps.baseline.outputs.reuse == 'true'
+        if: steps.baseline.outputs.reuse == 'true' && steps.baseline.outputs.reuse_kind == 'public'
         uses: actions/download-artifact@v4
         with:
-          name: Orbit-Windows-x64
+          artifact-ids: ${{ steps.baseline.outputs.reuse_artifact_id }}
+          merge-multiple: true
           path: C:/orbit-firefox/obj-orbit/dist/orbit
-          run-id: ${{ steps.baseline.outputs.run_id }}
+          run-id: ${{ steps.baseline.outputs.reuse_run_id }}
           github-token: ${{ github.token }}
+
+      - name: Download the matching internal native candidate
+        if: steps.baseline.outputs.reuse == 'true' && steps.baseline.outputs.reuse_kind == 'candidate'
+        uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ steps.baseline.outputs.reuse_artifact_id }}
+          merge-multiple: true
+          path: artifacts/native-reuse
+          run-id: ${{ steps.baseline.outputs.reuse_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Verify internal native candidate provenance and content
+        if: steps.baseline.outputs.reuse == 'true' && steps.baseline.outputs.reuse_kind == 'candidate'
+        shell: pwsh
+        env:
+          ORBIT_CANDIDATE_SHA: ${{ steps.baseline.outputs.reuse_head_sha }}
+          ORBIT_CANDIDATE_RUN: ${{ steps.baseline.outputs.reuse_run_id }}
+          ORBIT_CANDIDATE_ATTEMPT: ${{ steps.baseline.outputs.reuse_run_attempt }}
+        run: |
+          @'
+          import json, os, shutil, sys
+          from pathlib import Path
+          sys.path.insert(0, 'scripts')
+          from package_update import native_package_files, hash_stream, read_pin
+          from package_windows import verify_native_package
+          root = Path('artifacts/native-reuse')
+          package = root / 'Orbit'
+          def record(path):
+              with path.open('rb') as stream:
+                  digest, size = hash_stream(stream)
+              return {'path': path.relative_to(package).as_posix(), 'sha256': digest, 'size': size}
+          manifest = json.loads((root / 'orbit-native-candidate.json').read_text(encoding='utf-8'))
+          expected = {
+              'schema_version': 1, 'kind': 'internal-native-candidate', 'platform': 'windows-x64',
+              'repository': os.environ['GITHUB_REPOSITORY'], 'repository_id': os.environ['GITHUB_REPOSITORY_ID'],
+              'head_sha': os.environ['ORBIT_CANDIDATE_SHA'], 'run_id': os.environ['ORBIT_CANDIDATE_RUN'],
+              'run_attempt': os.environ['ORBIT_CANDIDATE_ATTEMPT'],
+              'workflow': '.github/workflows/windows-prototype.yml',
+              'firefox_source': json.loads(Path('firefox-source.json').read_text(encoding='utf-8')),
+          }
+          if any(manifest.get(key) != value for key, value in expected.items()):
+              raise ValueError('Internal candidate provenance does not match the selected trusted run and source pin')
+          if read_pin(package / 'firefox-source.json') != read_pin(Path('firefox-source.json')):
+              raise ValueError('Internal candidate browser contains a different engine pin')
+          records = [record(path) for path in native_package_files(package)]
+          if not records or records != manifest.get('files'):
+              raise ValueError('Internal candidate files do not match the verified content hashes')
+          verify_native_package(package)
+          destination = Path('C:/orbit-firefox/obj-orbit/dist/orbit')
+          destination.parent.mkdir(parents=True, exist_ok=True)
+          shutil.copytree(package, destination)
+          print('Verified internal candidate provenance, source pin, complete file hashes, and native resources')
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Install official MozillaBuild tools
         if: steps.baseline.outputs.reuse != 'true'
@@ -195,6 +290,47 @@ jobs:
       - name: Verify native radial page actions and held tab switching
         shell: pwsh
         run: python scripts/smoke_radial.py --binary artifacts/Orbit/orbit.exe --report test-results/radial/smoke.json
+
+      - name: Record internal native candidate provenance
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        shell: pwsh
+        run: |
+          @'
+          import json, os, sys
+          from pathlib import Path
+          sys.path.insert(0, 'scripts')
+          from package_update import native_package_files, hash_stream
+          package = Path('artifacts/Orbit')
+          def record(path):
+              with path.open('rb') as stream:
+                  digest, size = hash_stream(stream)
+              return {'path': path.relative_to(package).as_posix(), 'sha256': digest, 'size': size}
+          manifest = {
+              'schema_version': 1, 'kind': 'internal-native-candidate', 'platform': 'windows-x64',
+              'repository': os.environ['GITHUB_REPOSITORY'], 'repository_id': os.environ['GITHUB_REPOSITORY_ID'],
+              'head_sha': os.environ['GITHUB_SHA'], 'run_id': os.environ['GITHUB_RUN_ID'],
+              'run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
+              'workflow': '.github/workflows/windows-prototype.yml',
+              'firefox_source': json.loads(Path('firefox-source.json').read_text(encoding='utf-8')),
+              'files': [record(path) for path in native_package_files(package)],
+          }
+          Path('artifacts/orbit-native-candidate.json').write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf-8')
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload internal verified native candidate
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          # Internal build reuse only; public browser and update uploads stay below
+          # every updated-installation runtime check.
+          name: Orbit-Windows-native-candidate
+          path: |
+            artifacts/Orbit/
+            artifacts/orbit-native-candidate.json
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true
 
       - name: Package the lightweight interface update
         shell: pwsh
