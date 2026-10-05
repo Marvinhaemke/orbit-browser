@@ -88,12 +88,13 @@ function fixture() {
   browser.ownerDocument = { defaultView: win };
   let hidden = 0, extensionHidden = 0;
   popup.addEventListener("popuphidden", () => extensionHidden++);
-  const nativeContext = (source = browser) => {
+  const nativeContext = (source = browser, overrides = {}) => {
     const context = {
       shouldDisplay: true, browser: source, onLink: false, onImage: false,
       frameBrowsingContext: { id: 41 },
       contentData: { context: { screenXDevPx: 200, screenYDevPx: 200 } },
       hiding() { hidden++; },
+      ...overrides,
     };
     win.gContextMenu = context;
     const event = new Event("popupshowing", { cancelable: true });
@@ -212,6 +213,29 @@ test("quick release waits for native descriptor, then command restores content f
   assert.equal(f.selectAll.commands, 1);
   assert.equal(f.win.gContextMenu, null);
   assert.equal(f.hidden, 1); assert.equal(f.extensionHidden, 1);
+  OrbitRadial.uninit(f.win);
+});
+
+test("Open in new tab appears only in the center and forwards the original link command", () => {
+  const f = fixture();
+  const original = new NativeNode("menuitem", "context-openlinkintab", "Open Link in New Tab");
+  f.popup.append(original);
+  f.win.document.getElementById = id => id === original.id ? original : id === f.popup.id ? f.popup : undefined;
+  f.nativeContext(f.browser, {onLink: true});
+  assert.equal(f.view.model.items.some(item => item.id === original.id), false);
+  assert.equal(f.view.model.centerItem.label, "Open in new tab");
+  f.view.model.onActivate(f.view.model.centerItem);
+  assert.equal(original.commands, 1);
+  assert.equal(f.win.gContextMenu, null);
+  OrbitRadial.uninit(f.win);
+});
+
+test("Escape returns focus to the original content browser after native menu cleanup", () => {
+  const f = fixture();
+  f.nativeContext();
+  f.view.model.onDismiss("escape");
+  assert.equal(f.win.contentFocused, true);
+  assert.equal(f.win.gContextMenu, null);
   OrbitRadial.uninit(f.win);
 });
 

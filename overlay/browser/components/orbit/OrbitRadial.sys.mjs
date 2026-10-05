@@ -178,10 +178,13 @@ class RadialWindow {
 
   _contextItems() {
     this.elements.clear();
-    return snapshotNativeMenu(this.popup, {
+    const items = snapshotNativeMenu(this.popup, {
       identify: node => this._identify(node, "command"),
       elements: this.elements, populated: this.populated,
     });
+    const centerId = this.context?.onLink ? "context-openlinkintab" :
+      this.context?.onImage ? "context-viewimage" : null;
+    return items.filter(item => item.id !== centerId);
   }
 
   _centerItem() {
@@ -408,13 +411,19 @@ class RadialWindow {
   dismiss(reason = "dismiss") {
     if (this.dismissed) return;
     this.dismissed = true;
-    if (this.gesture?.down && reason !== "new-gesture") this._suppressContext(this.gesture.browser);
-    this.win.clearTimeout(this.contextTimer);
-    this.gesture = null;
-    this.mode = null;
-    this.view.hide(reason);
-    if (!this.executing) this._cleanupContext();
-    this.dismissed = false;
+    const browser = this.contextBrowser || this.gesture?.browser;
+    try {
+      if (this.gesture?.down && reason !== "new-gesture") this._suppressContext(this.gesture.browser);
+      this.win.clearTimeout(this.contextTimer);
+      this.gesture = null;
+      this.mode = null;
+      this.view.hide(reason);
+      if (!this.executing) this._cleanupContext();
+      if (reason === "escape" && browser === this.win.gBrowser.selectedBrowser &&
+          this.win.document.hasFocus?.() !== false) browser.focus();
+    } finally {
+      this.dismissed = false;
+    }
   }
 
   destroy() {

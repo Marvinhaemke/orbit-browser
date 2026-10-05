@@ -51,6 +51,8 @@ jobs:
       - name: Check native interface and tab bridge behavior
         shell: pwsh
         run: |
+          python -c "from pathlib import Path; scope = {'MOZ_SRC_FILES': []}; exec(Path('overlay/browser/components/orbit/moz.build').read_text(), scope); assert scope['MOZ_SRC_FILES'] == sorted(scope['MOZ_SRC_FILES']), 'Firefox source modules must be sorted'"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node --check overlay/browser/components/orbit/Orbit.sys.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node --check overlay/browser/base/content/orbit/orbit.js
