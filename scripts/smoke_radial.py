@@ -63,7 +63,15 @@ class FixturePage(BaseHTTPRequestHandler):
                 '<input id="editable-target" value="Editable native context text">'
                 '<div id="selection-target">Select this text with native input</div>'
                 '<div id="contenteditable-target" contenteditable="true">Editable document selection</div>'
-                f'</main>{iframe}</body></html>'
+                f'</main>{iframe}'
+                '<script>window.orbitSmokeInputEvents=[];'
+                'for(const type of ["mousedown","mouseup","contextmenu","focus","blur","visibilitychange"]){'
+                'window.addEventListener(type,event=>{'
+                'window.orbitSmokeInputEvents.push({type,time:performance.now(),trusted:event.isTrusted,'
+                'button:event.button,buttons:event.buttons,target:event.target.id||event.target.localName,'
+                'screenX:event.screenX,screenY:event.screenY,visible:document.visibilityState,focused:document.hasFocus()});'
+                'if(window.orbitSmokeInputEvents.length>48)window.orbitSmokeInputEvents.shift();'
+                '},true);}</script></body></html>'
             ).encode("utf-8")
             content_type = "text/html; charset=utf-8"
         self.send_response(200)
@@ -322,7 +330,23 @@ def select_fixture(driver, handle):
     driver.set_context("content")
     driver.switch_to_window(handle)
     driver.switch_to_frame()
-    wait_for(driver, 'return !!document.getElementById("fixture-proof");', "fixture tab ready")
+    fixture_uri = driver.execute_script("return location.href;")
+    # Marionette selectTab waits for TabSelect, not the async native browser
+    # switch. Its already-loaded document can exist while the widget still
+    # displays the old tab. Wait for the selected layers and actual focus
+    # before a new trusted gesture; do not retry an unsuccessful gesture.
+    driver.set_context("chrome")
+    wait_for(driver, '''
+        const switcher = gBrowser._switcher;
+        return gBrowser.selectedBrowser.currentURI.spec === arguments[0] &&
+            (!switcher || (!switcher.switchInProgress &&
+                switcher.visibleTab === gBrowser.selectedTab && switcher.switchPaintId === -1));
+    ''', "selected native browser finishes its tab switch", [fixture_uri])
+    driver.set_context("content")
+    wait_for(driver, '''
+        return !!document.getElementById("fixture-proof") &&
+            document.visibilityState === "visible" && document.hasFocus();
+    ''', "fixture tab is visible and focused")
 
 
 def set_theme(driver, dark):
@@ -374,45 +398,45 @@ def main():
     report.parent.mkdir(parents=True, exist_ok=True)
     result = {"binary": str(args.binary.resolve()), "passed": False, "checks": [], "screenshots": []}
     driver = None
+    workspace_context = tempfile.TemporaryDirectory(prefix="orbit-native-radial-")
     server = ThreadingHTTPServer(("127.0.0.1", 0), FixturePage)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     url = f"http://127.0.0.1:{server.server_port}/"
     try:
-        with tempfile.TemporaryDirectory(prefix="orbit-native-radial-") as workspace:
-            driver = Marionette(
-                bin=str(args.binary.resolve()), app="fxdesktop", port=0,
-                headless=True, startup_timeout=90, socket_timeout=60,
-                workspace=workspace, gecko_log=str(report.parent / "radial-gecko.log"),
-                app_args=["-no-remote", "--remote-allow-system-access"],
-                prefs={
-                    "browser.startup.page": 0, "browser.startup.homepage": "about:blank",
-                    # Actions state belongs to a BrowsingContext (driver.sys.mjs
-                    # 268); down in content and up in chrome silently drops up.
-                    # Exact-pin async dispatch (driver.sys.mjs171-184,
-                    # Actions.sys.mjs1661) uses the topChromeWindow native widget
-                    # for actual remote content/chrome hit testing. Keep every
-                    # pointer action in that ONE chrome context instead.
-                    "remote.events.async.mouse.enabled": True,
-                },
-            )
-            driver.start_session()
-            driver.set_window_rect(width=1400, height=1000)
-            driver.set_context("content")
-            driver.navigate(url)
-            handle = driver.current_window_handle
-            wait_for(driver, 'return !!document.getElementById("fixture-proof");', "real Gecko fixture")
-            driver.set_context("chrome")
-            wait_for(driver, 'return !!window.gBrowserInit?.delayedStartupFinished && !!window.OrbitChrome;', "native Orbit startup")
-            assert driver.execute_script('''
-                return Services.prefs.getBoolPref("remote.events.async.mouse.enabled", false);
-            '''), "Trusted pointer input must use Firefox's native async widget dispatch"
-            run_checks(driver, handle, url, result, report.parent)
-            result["passed"] = True
-            driver.actions.release()
-            driver.delete_session()
-            driver.cleanup()
-            driver = None
+        driver = Marionette(
+            bin=str(args.binary.resolve()), app="fxdesktop", port=0,
+            headless=True, startup_timeout=90, socket_timeout=60,
+            workspace=workspace_context.name, gecko_log=str(report.parent / "radial-gecko.log"),
+            app_args=["-no-remote", "--remote-allow-system-access"],
+            prefs={
+                "browser.startup.page": 0, "browser.startup.homepage": "about:blank",
+                # Actions state belongs to a BrowsingContext (driver.sys.mjs
+                # 268); down in content and up in chrome silently drops up.
+                # Exact-pin async dispatch (driver.sys.mjs171-184,
+                # Actions.sys.mjs1661) uses the topChromeWindow native widget
+                # for actual remote content/chrome hit testing. Keep every
+                # pointer action in that ONE chrome context instead.
+                "remote.events.async.mouse.enabled": True,
+            },
+        )
+        driver.start_session()
+        driver.set_window_rect(width=1400, height=1000)
+        driver.set_context("content")
+        driver.navigate(url)
+        handle = driver.current_window_handle
+        wait_for(driver, 'return !!document.getElementById("fixture-proof");', "real Gecko fixture")
+        driver.set_context("chrome")
+        wait_for(driver, 'return !!window.gBrowserInit?.delayedStartupFinished && !!window.OrbitChrome;', "native Orbit startup")
+        assert driver.execute_script('''
+            return Services.prefs.getBoolPref("remote.events.async.mouse.enabled", false);
+        '''), "Trusted pointer input must use Firefox's native async widget dispatch"
+        run_checks(driver, handle, url, result, report.parent)
+        result["passed"] = True
+        driver.actions.release()
+        driver.delete_session()
+        driver.cleanup()
+        driver = None
     except Exception:
         result["error"] = traceback.format_exc()
         if driver:
@@ -420,16 +444,41 @@ def main():
                 driver.set_context("chrome")
                 result["failure_state"] = radial_state(driver)
                 screenshot(driver, report.parent, "radial-failure", result["screenshots"])
+                result["failure_native_browser"] = driver.execute_script('''
+                    const switcher = gBrowser._switcher;
+                    return {selectedURI: gBrowser.selectedBrowser.currentURI.spec,
+                        selectedTab: gBrowser.selectedTab.label, activeWindow: Services.focus.activeWindow === window,
+                        switching: switcher?.switchInProgress, paintId: switcher?.switchPaintId,
+                        visibleTab: switcher?.visibleTab?.label, requestedTab: switcher?.requestedTab?.label};
+                ''')
+                driver.set_context("content")
+                driver.switch_to_frame()
+                result["failure_content_input"] = driver.execute_script('''
+                    return {uri: location.href, visible: document.visibilityState, focused: document.hasFocus(),
+                        screenX: window.mozInnerScreenX, screenY: window.mozInnerScreenY,
+                        events: window.orbitSmokeInputEvents || []};
+                ''')
             except Exception:
                 result["capture_error"] = traceback.format_exc()
         raise
     finally:
         if driver:
             try:
+                driver.set_context("chrome")
                 driver.actions.release()
+            except Exception:
+                result["input_cleanup_error"] = traceback.format_exc()
+            try:
                 driver.cleanup()
             except Exception:
-                pass
+                result["browser_cleanup_error"] = traceback.format_exc()
+        # Stop Firefox before deleting its live profile. Previously the with
+        # block deleted cache files before this finally ran on a failed check,
+        # so WinError 32 replaced the useful assertion traceback.
+        try:
+            workspace_context.cleanup()
+        except Exception:
+            result["workspace_cleanup_error"] = traceback.format_exc()
         server.shutdown()
         server.server_close()
         report.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")

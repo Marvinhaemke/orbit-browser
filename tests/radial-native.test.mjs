@@ -251,6 +251,51 @@ test("late background-browser context is cancelled and cleaned without a suppres
   OrbitRadial.uninit(f.win);
 });
 
+test("a late old-browser popup preserves a newer held wheel and its release selection", () => {
+  const f = fixture();
+  f.win.gBrowser.selectedTab = f.second;
+  const source = f.second.linkedBrowser;
+  OrbitRadial.handleContentGesture(f.win, source, 52,
+    { kind: "down", screenX: 100, screenY: 100, buttons: 2 });
+  const model = f.view.model;
+  const target = model.items.find(item => item.label === "First");
+  const late = f.nativeContext(f.browser);
+  assert.equal(late.event.defaultPrevented, true);
+  assert.equal(f.win.gContextMenu, null);
+  assert.equal(f.hidden, 1);
+  assert.equal(f.extensionHidden, 1);
+  assert.equal(f.view.model, model);
+  assert.equal(f.view.model.mode, "tabs");
+  assert.equal(f.view.model.passthrough, true);
+  f.view.hit = target;
+  OrbitRadial.handleContentGesture(f.win, source, 52,
+    { kind: "up", screenX: 220, screenY: 100, buttons: 0 });
+  assert.equal(f.win.gBrowser.selectedTab, f.first);
+  assert.equal(f.view.model, null);
+  const released = f.nativeContext(source);
+  assert.equal(released.event.defaultPrevented, true);
+  assert.equal(f.win.gContextMenu, null);
+  assert.equal(f.hidden, 2);
+  OrbitRadial.uninit(f.win);
+});
+
+test("suppressed native popup cleanup preserves a released interactive tabs wheel", () => {
+  const f = fixture(); down(f);
+  f.view.hit = { id: "native-group", kind: "group", children: [f.view.model.items[1]] };
+  up(f, 220, 100);
+  const model = f.view.model;
+  assert.equal(model.passthrough, false);
+  const native = f.nativeContext();
+  assert.equal(native.event.defaultPrevented, true);
+  assert.equal(f.win.gContextMenu, null);
+  assert.equal(f.hidden, 1);
+  assert.equal(f.view.model, model);
+  model.onActivate(model.items.find(item => item.label === "Settings"));
+  assert.equal(f.win.gBrowser.selectedTab, f.second);
+  assert.equal(f.view.model, null);
+  OrbitRadial.uninit(f.win);
+});
+
 test("Linux down-context stays held, release switches to actions, native lazy submenu builds once", () => {
   const f = fixture(); down(f); f.nativeContext();
   assert.equal(f.view.model.mode, "tabs");

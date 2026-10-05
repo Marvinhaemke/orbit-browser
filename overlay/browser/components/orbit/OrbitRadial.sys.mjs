@@ -246,10 +246,16 @@ class RadialWindow {
     // gesture suppression window). Never display a background browser's
     // popup. Its initialization already ran, so finish that lifecycle too.
     if (browser !== this.win.gBrowser.selectedBrowser) {
+      const preserveTabs = this.mode === "tabs" &&
+        this.gesture?.browser === this.win.gBrowser.selectedBrowser;
       event.preventDefault();
       this.context = context;
       this.contextBrowser = browser;
-      this.dismiss("stale-browser-context");
+      this._cleanupContext();
+      // A late release descriptor from the preceding tab must not cancel a
+      // newer selected-browser gesture. The tab model uses native tabs, not
+      // this obsolete popup's command DOM, and remains safe to interact with.
+      if (!preserveTabs) this.dismiss("stale-browser-context");
       return;
     }
     if (event.shiftKey) return;
