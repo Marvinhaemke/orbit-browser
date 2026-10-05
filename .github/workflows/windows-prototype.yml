@@ -493,7 +493,7 @@ jobs:
 
           Every new tab opens the shared spatial canvas. Orbit now has its own moonstone/mineral-ink appearance, lagoon accents, orbital artwork, and sculpted controls with fluid motion.
 
-          For an existing installation, download Orbit-Update-Setup.zip and extract its two files beside orbit.exe once. Future interface changes download only the small UI package; your existing profile and Gecko engine are kept.
+          For an existing installation, download the current Orbit-Update-Setup.zip and extract its two files beside orbit.exe, replacing earlier updater copies for this release. Future interface changes can use Update-Orbit.cmd directly; your existing profile and Gecko engine are kept.
 
           Full browser downloads and native test results are available from the Windows prototype workflow. A new Gecko engine requires a complete browser download.
           EOF

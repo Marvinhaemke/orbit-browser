@@ -29,10 +29,11 @@ function Record([string]$Root, [string]$Relative) {
 function New-Fixture([string]$Name, [string]$InstallName = 'Orbit installation with spaces') {
     $case = Join-Path $TestRoot $Name
     $install = Join-Path $case $InstallName
-    foreach ($relative in @('orbit.exe', 'xul.dll', 'gmp-clearkey/component.dll')) {
+    foreach ($relative in @('orbit.exe', 'xul.dll', 'gmp-clearkey/component.dll', 'maintenanceservice.exe')) {
         Write-Utf8 (Join-Path $install $relative) ('unchanged native engine ' + $relative)
     }
     Write-Utf8 (Join-Path $install 'uninstall/helper.exe') 'original NSIS uninstall utility'
+    Write-Utf8 (Join-Path $install 'maintenanceservice_installer.exe') 'original optional NSIS maintenance installer'
     Write-Utf8 (Join-Path $install 'application.ini') "[App]`r`nName=Orbit`r`nBuildID=old-build`r`n"
     Write-Utf8 (Join-Path $install 'platform.ini') "[Build]`r`nBuildID=keep-this-platform-id`r`n"
     Write-Utf8 (Join-Path $install 'omni.ja') 'old root archive'
@@ -40,7 +41,7 @@ function New-Fixture([string]$Name, [string]$InstallName = 'Orbit installation w
     Write-Utf8 (Join-Path $install 'profile/prefs.js') 'real user notes and preferences sentinel'
     Write-Utf8 (Join-Path $install 'profile/extensions/user-plugin.dll') 'profile content excluded from native engine fingerprint'
     Write-Utf8 (Join-Path $install 'Launch-Orbit.cmd') '@echo off'
-    $engine = @(Record $install 'orbit.exe'; Record $install 'xul.dll'; Record $install 'gmp-clearkey/component.dll')
+    $engine = @(Record $install 'orbit.exe'; Record $install 'xul.dll'; Record $install 'gmp-clearkey/component.dll'; Record $install 'maintenanceservice.exe')
     return [pscustomobject]@{ case = $case; install = $install; engine = $engine; manifest = (Join-Path $case 'orbit-update.json'); archive = (Join-Path $case 'Orbit-UI-Update.zip') }
 }
 function New-Update($Fixture, [string]$Version = 'new', [hashtable]$Entries = $null) {
@@ -130,7 +131,7 @@ function Assert-Applied($Fixture, $Manifest, $Before) {
 }
 function Snapshot($Fixture) {
     $snapshot = @{}
-    foreach ($relative in @('orbit.exe', 'xul.dll', 'gmp-clearkey/component.dll', 'uninstall/helper.exe', 'application.ini', 'platform.ini', 'omni.ja', 'browser/omni.ja', 'profile/prefs.js', 'profile/extensions/user-plugin.dll', 'orbit-ui-version.json', 'browser/.purgecaches')) {
+    foreach ($relative in @('orbit.exe', 'xul.dll', 'gmp-clearkey/component.dll', 'maintenanceservice.exe', 'uninstall/helper.exe', 'maintenanceservice_installer.exe', 'other/maintenanceservice_installer.exe', 'other_installer.exe', 'application.ini', 'platform.ini', 'omni.ja', 'browser/omni.ja', 'profile/prefs.js', 'profile/extensions/user-plugin.dll', 'orbit-ui-version.json', 'browser/.purgecaches')) {
         $path = Join-Path $Fixture.install $relative
         $snapshot[$relative] = if (Test-Path -LiteralPath $path) { Digest $path } else { $null }
     }
@@ -222,6 +223,60 @@ try {
         Assert-True ($result.code -ne 0) 'Mismatched engine was accepted.'
         Assert-Unchanged $fixture $before
     }
+    Run-Case 'maintenance-installer-is-preserved-and-optional' {
+        param($fixture)
+        $manifest = New-Update $fixture
+        Write-Utf8 (Join-Path $fixture.install 'maintenanceservice_installer.exe') 'different NSIS installer from an older native package'
+        $before = Snapshot $fixture
+        $baseline = $before
+        $result = Invoke-Update $fixture
+        Assert-True ($result.code -eq 0) $result.output
+        Assert-Applied $fixture $manifest $before
+        Assert-True ($manifest.engine_files.path -notcontains 'maintenanceservice_installer.exe') 'Optional NSIS installer entered the native fingerprint.'
+        Remove-Item -LiteralPath (Join-Path $fixture.install 'maintenanceservice_installer.exe')
+        $manifest = New-Update $fixture 'installer-absent'
+        $before = Snapshot $fixture
+        $result = Invoke-Update $fixture
+        Assert-True ($result.code -eq 0) $result.output
+        Assert-Unchanged $fixture $before @('omni.ja', 'browser/omni.ja', 'orbit-ui-version.json', 'browser/.purgecaches')
+        foreach ($file in $manifest.files) {
+            Assert-True ((Digest (Join-Path $fixture.install $file.path)) -eq $file.sha256) 'UI update without the optional installer was not applied.'
+            Assert-True ((Digest (Join-Path $fixture.install ('.orbit-update-backup/files/' + $file.path))) -eq $baseline[$file.path]) 'Optional installer handling changed the original UI backup.'
+        }
+        Assert-True (!(Test-Path -LiteralPath (Join-Path $fixture.install 'maintenanceservice_installer.exe'))) 'UI update installed the optional maintenance installer.'
+    }
+    Run-Case 'maintenance-service-mismatch-is-rejected' {
+        param($fixture)
+        $null = New-Update $fixture
+        Write-Utf8 (Join-Path $fixture.install 'maintenanceservice.exe') 'different runtime maintenance service'
+        $before = Snapshot $fixture
+        $result = Invoke-Update $fixture
+        Assert-True ($result.code -ne 0 -and $result.output -like '*maintenanceservice.exe*') 'Changed native runtime service was accepted.'
+        Assert-Unchanged $fixture $before
+    }
+    Run-Case 'nested-and-unknown-installers-keep-strict-fingerprints' {
+        param($fixture)
+        $paths = @('other/maintenanceservice_installer.exe', 'other_installer.exe')
+        foreach ($relative in $paths) {
+            Write-Utf8 (Join-Path $fixture.install $relative) ('strict native installer ' + $relative)
+            $fixture.engine += Record $fixture.install $relative
+        }
+        $manifest = New-Update $fixture
+        $before = Snapshot $fixture
+        $result = Invoke-Update $fixture
+        Assert-True ($result.code -eq 0) $result.output
+        Assert-Applied $fixture $manifest $before
+        foreach ($relative in $paths) {
+            $path = Join-Path $fixture.install $relative
+            $original = [IO.File]::ReadAllBytes($path)
+            Write-Utf8 $path ('changed unrelated installer ' + $relative)
+            $before = Snapshot $fixture
+            $result = Invoke-Update $fixture
+            Assert-True ($result.code -ne 0 -and $result.output -like ('*' + $relative + '*')) "Changed $relative escaped its exact native fingerprint."
+            Assert-Unchanged $fixture $before
+            [IO.File]::WriteAllBytes($path, $original)
+        }
+    }
     Run-Case 'extra-engine-file-is-rejected' {
         param($fixture)
         $null = New-Update $fixture
@@ -239,6 +294,16 @@ try {
         $before = Snapshot $fixture
         $result = Invoke-Update $fixture
         Assert-True ($result.code -ne 0) 'NSIS uninstall helper was accepted into the engine fingerprint.'
+        Assert-Unchanged $fixture $before
+    }
+    Run-Case 'maintenance-installer-cannot-enter-engine-manifest' {
+        param($fixture)
+        $manifest = New-Update $fixture
+        $manifest.engine_files += Record $fixture.install 'maintenanceservice_installer.exe'
+        Save-Manifest $fixture $manifest
+        $before = Snapshot $fixture
+        $result = Invoke-Update $fixture
+        Assert-True ($result.code -ne 0 -and $result.output -like '*Invalid native engine file list*') 'NSIS maintenance installer was accepted into the engine fingerprint.'
         Assert-Unchanged $fixture $before
     }
     Run-Case 'ZIP-traversal-cannot-touch-profile' {

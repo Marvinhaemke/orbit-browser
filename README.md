@@ -29,6 +29,8 @@ The page wheel uses Firefox’s actual context commands for links, images, selec
 
 For an existing Orbit installation, download [Orbit-Update-Setup.zip](https://github.com/Marvinhaemke/orbit-browser/releases/download/windows-prototype/Orbit-Update-Setup.zip) once and extract its two files beside `orbit.exe` and `Launch-Orbit.cmd`. New full browser packages already include these files.
 
+For the liquid-interface release, refresh these two updater files even if you installed an earlier setup ZIP. Replace the existing copies; subsequent interface changes can use **Update-Orbit.cmd** directly.
+
 Close Orbit, then double-click **Update-Orbit.cmd**. It downloads the latest tested interface package, applies it to the existing installation, and reopens the same portable profile. Tabs, bookmarks, notes, and canvas layouts stay in that profile. No Git checkout, GitHub sign-in, or build tools are needed.
 
 The updater replaces the two packaged interface archives, verifies their hashes and the installed engine, keeps a backup, and clears Firefox’s compiled interface caches on restart. It refuses an incompatible engine or an update while Orbit is running. If Gecko changes, use a new full browser download instead.

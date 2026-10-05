@@ -28,6 +28,7 @@ class UpdatePackageTests(unittest.TestCase):
         (self.package / "browser").mkdir(parents=True)
         (self.package / "uninstall").mkdir()
         (self.package / "uninstall/helper.exe").write_bytes(b"per-build uninstall helper fixture")
+        (self.package / "maintenanceservice_installer.exe").write_bytes(b"per-build maintenance installer fixture")
         self.pin = {"revision": "a" * 40, "artifact_revision": "a" * 40}
         for directory in (self.root, self.package):
             (directory / "firefox-source.json").write_text(json.dumps(self.pin), encoding="utf-8")
@@ -138,6 +139,36 @@ class UpdatePackageTests(unittest.TestCase):
             self.assertEqual(archive.namelist(), list(update.PAYLOAD_PATHS))
             self.assertNotIn("uninstall/helper.exe", archive.namelist())
         self.assertEqual(helper.read_bytes(), replacement)
+
+    def test_rebuilt_optional_maintenance_installer_is_preserved_and_not_updated(self):
+        original = self.build()["engine_files"]
+        installer = self.package / "maintenanceservice_installer.exe"
+        replacement = b"new NSIS maintenance installer from a separate frontend build"
+        installer.write_bytes(replacement)
+        rebuilt = self.build()
+        self.assertEqual(rebuilt["engine_files"], original)
+        self.assertNotIn("maintenanceservice_installer.exe", [record["path"] for record in rebuilt["engine_files"]])
+        with zipfile.ZipFile(self.output / update.UPDATE_NAME) as archive:
+            self.assertEqual(archive.namelist(), list(update.PAYLOAD_PATHS))
+        self.assertEqual(installer.read_bytes(), replacement)
+        installer.unlink()
+        self.assertEqual(self.build()["engine_files"], original)
+
+    def test_maintenance_service_and_other_installers_keep_strict_fingerprints(self):
+        service = self.package / "maintenanceservice.exe"
+        service.write_bytes(b"pinned runtime maintenance service")
+        nested = self.package / "other/maintenanceservice_installer.exe"
+        nested.parent.mkdir()
+        nested.write_bytes(b"an unrelated installer must not be excluded by its basename")
+        generic = self.package / "other_installer.exe"
+        generic.write_bytes(b"another installer must not receive a wildcard exclusion")
+        before = {record["path"]: record for record in self.build()["engine_files"]}
+        for path in (service, nested, generic, self.package / "orbit.exe", self.package / "xul.dll"):
+            relative = path.relative_to(self.package).as_posix()
+            self.assertIn(relative, before)
+            path.write_bytes(path.read_bytes() + b" changed")
+            after = {record["path"]: record for record in self.build()["engine_files"]}
+            self.assertNotEqual(before[relative]["sha256"], after[relative]["sha256"], relative)
 
     def test_personal_profile_is_rejected_before_engine_file_enumeration(self):
         profile = self.package / "profile"

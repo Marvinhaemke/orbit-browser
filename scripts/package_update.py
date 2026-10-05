@@ -25,9 +25,12 @@ SETUP_PATHS = ("Update-Orbit.cmd", "Update-Orbit.ps1")
 UPDATE_NAME = "Orbit-UI-Update.zip"
 MANIFEST_NAME = "orbit-update.json"
 SETUP_NAME = "Orbit-Update-Setup.zip"
-# NSIS rebuilds this uninstall utility for each package. It is not runtime
-# engine code and remains installed unchanged during frontend updates.
-ENGINE_EXCLUSIONS = frozenset({"uninstall/helper.exe"})
+# Firefox's Windows frontend build regenerates these two NSIS utilities
+# independently of the pinned Gecko artifact. They uninstall the application
+# or install the optional maintenance service; neither loads browser resources.
+# UI updates never execute or replace them. All other EXEs/DLLs, including the
+# maintenance service itself, remain part of the strict native fingerprint.
+ENGINE_EXCLUSIONS = frozenset({"uninstall/helper.exe", "maintenanceservice_installer.exe"})
 REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 
 
