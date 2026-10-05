@@ -99,12 +99,21 @@ jobs:
             // This public baseline remains independent of internal native reuse.
             core.setOutput('run_id', previous?.workflow_run.id || '');
             core.setOutput('reuse', 'false');
+            core.setOutput('css_baseline', '{}');
             if (previous) core.info(`Testing updates against the public browser from run ${previous.workflow_run.id}`);
             const current = fs.readFileSync(workflow, 'utf8').replace(/\r\n/g, '\n');
             const env = text => text.match(/\n    env:\n([\s\S]*?)\n    steps:/)?.[1];
             const runner = text => text.match(/\n    runs-on: ([^\n]+)/)?.[1];
             const build = text => text.match(/^      - name: Build pinned Gecko with Orbit native UI\n[\s\S]*?        run: \|\n([\s\S]*?)(?=\n      - name:)/m)?.[1];
             const nativeInput = /^(overlay\/|configs\/|firefox-source\.json$|scripts\/(build\.py|prepare_source\.py|windows-build\.sh)$)/;
+            // Existing plain CSS resources can be repackaged without changing
+            // native hooks, modules, localization, registration, or the engine.
+            const cssPaths = [
+              'overlay/browser/base/content/orbit/orbit.css',
+              'overlay/browser/base/content/orbit/orbit-radial.css',
+              'overlay/browser/base/content/orbit/orbit-chrome.css'
+            ];
+            const cssOnly = file => file.status === 'modified' && cssPaths.includes(file.filename) && !file.previous_filename;
             const candidates = artifacts.filter(a => a.name === 'Orbit-Windows-native-candidate' && eligible(a));
             if (previous) candidates.push(previous);
             for (const artifact of candidates) {
@@ -117,7 +126,10 @@ jobs:
               // Refuse that cap rather than infer that an incomplete comparison matches.
               const files = comparison.data.files;
               if (!files || files.length >= 300 || !['ahead', 'identical'].includes(comparison.data.status)) continue;
-              if (files.some(file => nativeInput.test(file.filename) || nativeInput.test(file.previous_filename || ''))) continue;
+              if (files.some(file =>
+                (nativeInput.test(file.filename) || nativeInput.test(file.previous_filename || '')) && !cssOnly(file))) continue;
+              const changedCSS = files.filter(cssOnly);
+
               const prior = await github.rest.repos.getContent({ owner, repo, path: workflow, ref: run.head_sha });
               if (prior.data.type !== 'file' || prior.data.encoding !== 'base64') continue;
               const before = Buffer.from(prior.data.content, 'base64').toString('utf8').replace(/\r\n/g, '\n');
@@ -138,13 +150,24 @@ jobs:
                   ['Upload internal built native candidate', 'Upload internal verified native candidate'].includes(step.name) &&
                   step.conclusion === 'success')));
               if (!job) continue;
+              let cssBaseline = {};
+              if (changedCSS.length) {
+                let valid = true;
+                for (const path of cssPaths) {
+                  const source = await github.rest.repos.getContent({ owner, repo, path, ref: run.head_sha });
+                  if (source.data.type !== 'file' || !/^[0-9a-f]{40}$/.test(source.data.sha)) { valid = false; break; }
+                  cssBaseline[path] = source.data.sha;
+                }
+                if (!valid) continue;
+              }
+              core.setOutput('css_baseline', JSON.stringify(cssBaseline));
               core.setOutput('reuse', 'true');
               core.setOutput('reuse_run_id', run.id);
               core.setOutput('reuse_artifact_id', artifact.id);
               core.setOutput('reuse_head_sha', run.head_sha);
               core.setOutput('reuse_run_attempt', job.run_attempt);
               core.setOutput('reuse_kind', internal ? 'candidate' : 'public');
-              core.info(`Native source, build environment and command match ${internal ? 'internal built candidate' : 'verified public browser'} from run ${run.id}. Fresh and updated runtime checks will run again.`);
+              core.info(`Native inputs, build environment and command match ${internal ? 'internal built candidate' : 'verified public browser'} from run ${run.id}${changedCSS.length ? `, except ${changedCSS.length} registered CSS resources to verify and repackage` : ''}. All fresh and updated runtime checks will run again.`);
               break;
             }
 
@@ -211,6 +234,17 @@ jobs:
           print('Verified internal candidate provenance, source pin, complete file hashes, and native resources')
           '@ | python -
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Repackage existing Orbit CSS in the matching native build
+        if: steps.baseline.outputs.reuse == 'true' && steps.baseline.outputs.css_baseline != '{}'
+        shell: pwsh
+        env:
+          ORBIT_CSS_BASELINE: ${{ steps.baseline.outputs.css_baseline }}
+        run: |
+          New-Item -ItemType Directory -Force test-results | Out-Null
+          Set-Content test-results/orbit-css-baseline.json $env:ORBIT_CSS_BASELINE -Encoding utf8
+          python scripts/patch_native_css.py --package C:/orbit-firefox/obj-orbit/dist/orbit --baseline test-results/orbit-css-baseline.json
+          if ($LASTEXITCODE -ne 0) { throw 'Native CSS resource validation or repackaging failed' }
 
       - name: Install official MozillaBuild tools
         if: steps.baseline.outputs.reuse != 'true'

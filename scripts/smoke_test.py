@@ -292,6 +292,7 @@ def verify_native_newtab_ux(driver, fixture_handle, url, result, folder):
     canvas_document_note(driver, note_id, changed)
     themes = []
     for dark in (True, False):
+        driver.set_context("chrome")
         driver.execute_script('Services.prefs.setIntPref("ui.systemUsesDarkTheme", arguments[0]);', script_args=[1 if dark else 0])
         wait_for(driver, 'return window.matchMedia("(prefers-color-scheme: dark)").matches === arguments[0];'.replace("arguments[0]", json.dumps(dark)), "default Orbit theme follows the forced native color scheme")
         palette = wait_for(driver, '''
@@ -302,7 +303,9 @@ def verify_native_newtab_ux(driver, fixture_handle, url, result, folder):
             const viewport = doc.getElementById("viewport");
             const native = getComputedStyle(root);
             const canvas = doc.defaultView.getComputedStyle(doc.documentElement);
-            const urlbar = getComputedStyle(document.getElementById("urlbar-background"));
+            const urlbarNode = document.querySelector("#urlbar .urlbar-background");
+            if (!urlbarNode) throw new Error("Pinned Firefox URL-bar background is missing");
+            const urlbar = getComputedStyle(urlbarNode);
             return root.dataset.orbitTheme === "default" && box?.width > 0 && box?.height > 0 && {
                 chromeBase: native.getPropertyValue("--orbit-chrome-base").trim(),
                 chromeInk: native.getPropertyValue("--orbit-chrome-ink").trim(),
