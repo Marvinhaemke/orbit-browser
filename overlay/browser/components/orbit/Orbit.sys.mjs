@@ -14,6 +14,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
     "moz-src:///toolkit/components/contextualidentity/ContextualIdentityService.sys.mjs",
   CustomizableUI:
     "moz-src:///browser/components/customizableui/CustomizableUI.sys.mjs",
+  OrbitRadial: "moz-src:///browser/components/orbit/OrbitRadial.sys.mjs",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
   SessionStore:
     "moz-src:///browser/components/sessionstore/SessionStore.sys.mjs",
@@ -719,6 +720,7 @@ export const Orbit = {
       return;
     }
     this._windows.set(win, new OrbitWindow(win));
+    lazy.OrbitRadial.init(win);
     if (!this._widgetCreated) {
       lazy.CustomizableUI.createWidget({
         id: "orbit-canvas-button",
@@ -759,6 +761,7 @@ export const Orbit = {
   },
 
   uninit(win) {
+    lazy.OrbitRadial.uninit(win);
     this._windows.get(win)?.destroy();
     this._windows.delete(win);
   },

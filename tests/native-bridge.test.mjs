@@ -22,6 +22,7 @@ const tabs = new WeakMap();
 const browserWindows = new Set();
 let widgetProperties;
 const modules = {
+  OrbitRadial: { init() {}, uninit() {} },
   PrivateBrowsingUtils: { isWindowPrivate: win => win.private },
   ContextualIdentityService: { getPublicIdentityFromId: id => id === 2 ? { userContextId: 2 } : null },
   CustomizableUI: {

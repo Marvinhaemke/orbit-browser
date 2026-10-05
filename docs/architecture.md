@@ -28,6 +28,12 @@ Workspace data is stored through Firefox SessionStore custom window values. Tab 
 
 The browser component controls the boundary between the canvas and website content. Website titles and URLs are untrusted text. Canvas actions accept website URLs and explicit native tab identifiers; they must not expose arbitrary evaluation or unrestricted privileged navigation.
 
+`OrbitRadial.sys.mjs` owns a radial-menu controller for each browser window. Trusted pointer events arrive through `OrbitRadialChild` and `OrbitRadialParent` JSWindowActors; the parent validates that their current browsing context belongs to the selected native tab. Held tab wheels stay pointer-transparent so the original webpage receives button release and Firefox can construct the correct link, image, selection, or editing context, including cross-origin frames.
+
+The page wheel snapshots Firefox's initialized `contentAreaContextMenu` and invokes its original commands. It retains the native context descriptor for those commands, suppresses the ordinary popup, and completes its cleanup when the wheel closes. The tab wheel reads native open tabs and tab groups, including internal pages and collapsed groups. `OrbitRadialView.sys.mjs` renders scoped SVG rings, paginates overflowing options recursively, and handles hover, keyboard input, animation, viewport bounds, and reduced motion. Website text is rendered as text, and content messages cannot supply privileged commands or menu definitions.
+
+`scripts/smoke_radial.py` exercises physical right-button down/up gestures against the packaged native browser, checks real command effects and group expansion, and captures light and dark screenshots. CI repeats these checks after applying the interface update to an existing installation.
+
 ## What remains upstream
 
 Gecko rendering, the native tab strip, extensions, downloads, settings, permissions, developer tools, and the operating-system integrations come from Firefox. This prototype concentrates changes in browser chrome and packaging. Their continued behavior needs platform regression testing as the fork grows.

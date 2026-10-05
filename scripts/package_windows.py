@@ -62,7 +62,19 @@ def verify_native_package(package: Path) -> None:
     for jar in (package / "omni.ja", package / "browser" / "omni.ja"):
         with zipfile.ZipFile(jar) as archive:
             entries.update(archive.namelist())
-    for suffix in ("browser/components/orbit/Orbit.sys.mjs", "orbit/orbit.html", "orbit/orbit.css", "orbit/orbit.js", "orbit/orbit.svg"):
+    required_resources = (
+        "browser/components/orbit/Orbit.sys.mjs",
+        "browser/components/orbit/OrbitRadial.sys.mjs",
+        "browser/components/orbit/OrbitRadialView.sys.mjs",
+        "browser/components/orbit/OrbitRadialChild.sys.mjs",
+        "browser/components/orbit/OrbitRadialParent.sys.mjs",
+        "orbit/orbit.html",
+        "orbit/orbit.css",
+        "orbit/orbit.js",
+        "orbit/orbit.svg",
+        "orbit/orbit-radial.css",
+    )
+    for suffix in required_resources:
         if not any(name.endswith(suffix) for name in entries):
             raise ValueError(f"Native Orbit resource was not built into omni.ja: {suffix}")
     app_ini = (package / "application.ini").read_text(encoding="utf-8")

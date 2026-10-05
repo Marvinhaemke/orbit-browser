@@ -76,7 +76,8 @@ def transform(path: str, original: str) -> str:
             "        content/browser/orbit/orbit.html (content/orbit/orbit.html)\n"
             "        content/browser/orbit/orbit.css  (content/orbit/orbit.css)\n"
             "        content/browser/orbit/orbit.js   (content/orbit/orbit.js)\n"
-            "        content/browser/orbit/orbit.svg  (content/orbit/orbit.svg)\n",
+            "        content/browser/orbit/orbit.svg  (content/orbit/orbit.svg)\n"
+            "        content/browser/orbit/orbit-radial.css (content/orbit/orbit-radial.css)\n",
             1,
         )
     if path == "browser/branding/unofficial/configure.sh":
@@ -127,11 +128,16 @@ def apply_overlay(source: Path, root: Path = ROOT) -> None:
     overlay = root / "overlay"
     required = [
         "browser/components/orbit/Orbit.sys.mjs",
+        "browser/components/orbit/OrbitRadial.sys.mjs",
+        "browser/components/orbit/OrbitRadialView.sys.mjs",
+        "browser/components/orbit/OrbitRadialChild.sys.mjs",
+        "browser/components/orbit/OrbitRadialParent.sys.mjs",
         "browser/components/orbit/moz.build",
         "browser/base/content/orbit/orbit.html",
         "browser/base/content/orbit/orbit.css",
         "browser/base/content/orbit/orbit.js",
         "browser/base/content/orbit/orbit.svg",
+        "browser/base/content/orbit/orbit-radial.css",
     ]
     for path in required:
         if not (overlay / path).is_file():

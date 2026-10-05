@@ -42,11 +42,16 @@ class SourceGuardTests(unittest.TestCase):
             destination.write_text(text, encoding="utf-8", newline="\n")
         for path in (
             "browser/components/orbit/Orbit.sys.mjs",
+            "browser/components/orbit/OrbitRadial.sys.mjs",
+            "browser/components/orbit/OrbitRadialView.sys.mjs",
+            "browser/components/orbit/OrbitRadialChild.sys.mjs",
+            "browser/components/orbit/OrbitRadialParent.sys.mjs",
             "browser/components/orbit/moz.build",
             "browser/base/content/orbit/orbit.html",
             "browser/base/content/orbit/orbit.css",
             "browser/base/content/orbit/orbit.js",
             "browser/base/content/orbit/orbit.svg",
+            "browser/base/content/orbit/orbit-radial.css",
         ):
             destination = self.root / "overlay" / path
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -77,6 +82,9 @@ class SourceGuardTests(unittest.TestCase):
         self.assertIn('    "orbit",', (self.source / "browser/components/moz.build").read_text(encoding="utf-8"))
         self.assertIn("content/browser/orbit/orbit.html", (self.source / "browser/base/jar.mn").read_text(encoding="utf-8"))
         self.assertIn("content/browser/orbit/orbit.svg", (self.source / "browser/base/jar.mn").read_text(encoding="utf-8"))
+        self.assertIn("content/browser/orbit/orbit-radial.css (content/orbit/orbit-radial.css)", (self.source / "browser/base/jar.mn").read_text(encoding="utf-8"))
+        for name in ("OrbitRadial.sys.mjs", "OrbitRadialView.sys.mjs", "OrbitRadialChild.sys.mjs", "OrbitRadialParent.sys.mjs"):
+            self.assertEqual((self.source / "browser/components/orbit" / name).read_text(encoding="utf-8"), "test overlay\n")
 
     def test_upstream_drift_aborts_without_partial_writes(self):
         drift_path = "browser/base/jar.mn"
@@ -95,6 +103,23 @@ class SourceGuardTests(unittest.TestCase):
         for path, text in self.fixture.items():
             self.assertEqual((self.source / path).read_text(encoding="utf-8"), text)
 
+    def test_missing_radial_resource_aborts_before_upstream_edits(self):
+        for path in (
+            "browser/components/orbit/OrbitRadial.sys.mjs",
+            "browser/components/orbit/OrbitRadialView.sys.mjs",
+            "browser/components/orbit/OrbitRadialChild.sys.mjs",
+            "browser/components/orbit/OrbitRadialParent.sys.mjs",
+            "browser/base/content/orbit/orbit-radial.css",
+        ):
+            with self.subTest(path=path):
+                resource = self.root / "overlay" / path
+                original = resource.read_bytes()
+                resource.unlink()
+                with self.assertRaisesRegex(ValueError, "Missing required native overlay"):
+                    prepare.apply_overlay(self.source, self.root)
+                self.assertEqual({path: (self.source / path).read_text(encoding="utf-8") for path in self.fixture}, self.fixture)
+                resource.write_bytes(original)
+
     def test_mozilla_update_policy_is_enforced(self):
         policy = json.loads((ROOT / "configs/policies.json").read_text(encoding="utf-8"))
         self.assertIs(policy["policies"]["DisableAppUpdate"], True)
@@ -103,16 +128,27 @@ class SourceGuardTests(unittest.TestCase):
 
 
 class PackageGuardTests(unittest.TestCase):
-    def native_fixture(self, folder):
+    def native_fixture(self, folder, omitted=None):
         (folder / "browser").mkdir(parents=True)
         for name in ("orbit.exe", "xul.dll"):
             (folder / name).write_bytes(b"native-package-test-fixture")
         (folder / "application.ini").write_text("[App]\nName=Orbit\n", encoding="utf-8")
         with zipfile.ZipFile(folder / "omni.ja", "w") as archive:
-            archive.writestr("moz-src/browser/components/orbit/Orbit.sys.mjs", "fixture")
+            for name in ("Orbit.sys.mjs", "OrbitRadial.sys.mjs", "OrbitRadialView.sys.mjs", "OrbitRadialChild.sys.mjs", "OrbitRadialParent.sys.mjs"):
+                if name != omitted:
+                    archive.writestr(f"moz-src/browser/components/orbit/{name}", "fixture")
         with zipfile.ZipFile(folder / "browser/omni.ja", "w") as archive:
-            for name in ("orbit.html", "orbit.css", "orbit.js", "orbit.svg"):
-                archive.writestr(f"chrome/browser/content/browser/orbit/{name}", "fixture")
+            for name in ("orbit.html", "orbit.css", "orbit.js", "orbit.svg", "orbit-radial.css"):
+                if name != omitted:
+                    archive.writestr(f"chrome/browser/content/browser/orbit/{name}", "fixture")
+
+    def test_package_without_a_required_radial_resource_is_rejected(self):
+        for name in ("OrbitRadial.sys.mjs", "OrbitRadialView.sys.mjs", "OrbitRadialChild.sys.mjs", "OrbitRadialParent.sys.mjs", "orbit-radial.css"):
+            with self.subTest(resource=name), tempfile.TemporaryDirectory() as directory:
+                folder = Path(directory)
+                self.native_fixture(folder, omitted=name)
+                with self.assertRaisesRegex(ValueError, "Native Orbit resource was not built"):
+                    package.verify_native_package(folder)
 
     def test_complete_download_has_launcher_next_to_executable_and_isolated_profile(self):
         with tempfile.TemporaryDirectory() as directory:

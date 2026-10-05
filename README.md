@@ -1,22 +1,29 @@
 # Orbit Browser
 
-Orbit is a Windows-first Firefox source fork exploring spatial browsing. Its canvas is compiled into Firefox’s browser interface. Websites render through Gecko, tabs are native Firefox tabs, and no browser extension is installed.
+Orbit is a Windows-first Firefox source fork exploring spatial browsing and new browser interactions. Its canvas and radial menus are compiled into Firefox’s browser interface. Websites render through Gecko, tabs are native Firefox tabs, and no browser extension is installed.
 
 This repository contains a small source overlay and guarded build scripts rather than a duplicate of Firefox’s entire history. The scripts fetch a pinned Firefox revision, apply the Orbit changes, and produce a native browser package.
 
 ## Windows prototype
 
-**[Download the verified toolbar-fix build](https://github.com/Marvinhaemke/orbit-browser/actions/runs/37236468606/artifacts/11316087113)** · [Native mouse, shortcut, and browser test results](https://github.com/Marvinhaemke/orbit-browser/actions/runs/37236468606)
-
 Download `Orbit-Windows-x64` from the latest successful [Windows build](https://github.com/Marvinhaemke/orbit-browser/actions/workflows/windows-prototype.yml).
 
-Runtime verification clicks the actual toolbar button, checks the icon and visible canvas, tests Alt+Shift+O, and captures a screenshot. It also checks real Gecko rendering, native tab import and opening, frame opening without duplicates, SessionStore persistence, live previews, and native split views. Windows artifacts are retained for 14 days; the workflow can build a fresh package afterward.
+Runtime verification uses physical mouse input to test the toolbar, radial page actions, held tab switching, grouped tabs, and nested overflow rings. It captures native screenshots and checks link opening, editing, clipboard actions, cross-origin iframe targets, real Gecko rendering, SessionStore persistence, previews, and native split views. Windows artifacts are retained for 14 days; the workflow can build a fresh package afterward.
 
 The [Windows prototype workflow](https://github.com/Marvinhaemke/orbit-browser/actions/workflows/windows-prototype.yml) runs on pushes to `main`, pull requests, and manual requests. A downloadable package is published as a workflow artifact **only after the built browser passes the native runtime smoke test**.
 
 After a successful run, download its `Orbit-Windows-x64` artifact and extract it once to a writable folder. Run `Launch-Orbit.cmd` beside `orbit.exe` and `START-HERE.txt`. Windows may show the launcher as **Launch-Orbit** when file extensions are hidden. The launcher uses a dedicated Orbit profile. The native executable is `orbit.exe`, using Mozilla’s compiled Gecko engine with Orbit’s rebuilt browser interface.
 
 Use the **Orbit canvas** toolbar button or **Alt + Shift + O** to open the workspace. Firefox’s normal toolbar and tab strip remain available.
+
+## Radial browser interaction
+
+- **Quick right-click on a webpage:** release the button to open page actions. **Open in new tab** sits in the center and uses the clicked link or image when available; otherwise it opens the current page in a new tab.
+- **Hold the right button:** the tab wheel appears on button down. Move onto a tab and release to switch to it. Releasing without choosing a tab opens page actions.
+- **Hover a submenu:** another ring opens outside the current ring. Native tab groups and **More** work the same way, including further layers. Each ring contains at most eight options.
+- **Escape:** move back one layer, then dismiss. Arrow keys and Enter also navigate the menu. Clicking outside dismisses it.
+
+The page wheel uses Firefox’s actual context commands for links, images, selected text, editing, media, and extension actions. Its animations follow the operating system’s reduced-motion preference, and its colors adapt to light, dark, and high-contrast settings.
 
 ## Test interface changes without downloading the whole browser
 
@@ -33,6 +40,7 @@ The source implements:
 - A pan-and-zoom canvas populated from real browser tabs.
 - Draggable tab cards and named, resizable frames that open their tabs together.
 - Editable sticky notes, connections, freehand drawing, and undo.
+- Radial webpage actions and a held right-button tab switcher, with nested groups and overflow.
 - A radial context menu on the canvas.
 - Website peeking and comparison through native Gecko browsers and Firefox split views.
 - Session-backed workspace layouts, with private-window data kept in memory.
@@ -53,6 +61,7 @@ python scripts/build.py --source C:/orbit-firefox
 python scripts/package_windows.py --source C:/orbit-firefox --output artifacts
 python -m pip install C:/orbit-firefox/testing/marionette/client
 python scripts/smoke_test.py --binary artifacts/Orbit/orbit.exe --report test-results/smoke.json
+python scripts/smoke_radial.py --binary artifacts/Orbit/orbit.exe --report test-results/radial/smoke.json
 ```
 
 `prepare_source.py` verifies the exact upstream revision and the original files before changing them. It refuses unexpected source changes. Repeating preparation on a matching checkout is supported.
@@ -65,7 +74,7 @@ The runtime code uses Firefox’s platform-neutral browser APIs. The first packa
 
 ## Prototype boundaries
 
-- The radial menu currently applies to the canvas. Ordinary webpages retain Firefox’s native context menus.
+- The native tab strip, browser toolbar, and operating-system menus retain their upstream layouts. Webpage context actions use the new radial interface.
 - Workspace persistence follows Firefox’s session restoration. Private workspaces are not written into session state.
 - Removing a canvas card does not close its browser tab.
 - Automatic Firefox application updates are disabled so an upstream update cannot replace Orbit’s modified interface. Orbit’s prototype updater delivers tested interface changes; engine upgrades need a full package.

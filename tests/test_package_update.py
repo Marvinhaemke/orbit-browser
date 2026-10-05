@@ -36,9 +36,10 @@ class UpdatePackageTests(unittest.TestCase):
         (self.package / "platform.ini").write_text("[Build]\nBuildID=20260101010101\n", encoding="utf-8")
         (self.package / "application.ini").write_text("[App]\nName=Orbit\nBuildID=20260102020202\n", encoding="utf-8")
         with zipfile.ZipFile(self.package / "omni.ja", "w") as archive:
-            archive.writestr("moz-src/browser/components/orbit/Orbit.sys.mjs", "native Orbit module fixture")
+            for name in ("Orbit.sys.mjs", "OrbitRadial.sys.mjs", "OrbitRadialView.sys.mjs", "OrbitRadialChild.sys.mjs", "OrbitRadialParent.sys.mjs"):
+                archive.writestr(f"moz-src/browser/components/orbit/{name}", "native Orbit module fixture")
         with zipfile.ZipFile(self.package / "browser/omni.ja", "w") as archive:
-            for name in ("orbit.html", "orbit.css", "orbit.js", "orbit.svg"):
+            for name in ("orbit.html", "orbit.css", "orbit.js", "orbit.svg", "orbit-radial.css"):
                 archive.writestr(f"chrome/browser/content/browser/orbit/{name}", f"native {name} fixture")
         for name in update.SETUP_PATHS:
             (self.root / "scripts/windows" / name).write_text(f"updater fixture: {name}\n", encoding="utf-8")
@@ -100,6 +101,17 @@ class UpdatePackageTests(unittest.TestCase):
             with self.assertRaises((ValueError, FileNotFoundError)):
                 self.build()
             path.write_bytes(raw)
+        self.assertFalse(self.output.exists())
+
+    def test_update_without_native_radial_resources_is_rejected_before_publication(self):
+        jar = self.package / "browser/omni.ja"
+        with zipfile.ZipFile(jar) as archive:
+            contents = {name: archive.read(name) for name in archive.namelist() if not name.endswith("orbit-radial.css")}
+        with zipfile.ZipFile(jar, "w") as archive:
+            for name, data in contents.items():
+                archive.writestr(name, data)
+        with self.assertRaisesRegex(ValueError, "orbit-radial.css"):
+            self.build()
         self.assertFalse(self.output.exists())
 
     def test_build_timestamp_metadata_does_not_change_engine_fingerprint(self):

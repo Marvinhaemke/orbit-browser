@@ -57,6 +57,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node tests/native-bridge.test.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($module in 'OrbitRadial', 'OrbitRadialChild', 'OrbitRadialParent', 'OrbitRadialView') {
+            node --check "overlay/browser/components/orbit/$module.sys.mjs"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          node tests/radial-view.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node tests/radial-native.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Find a tested browser with matching native source
         id: baseline
@@ -125,6 +133,17 @@ jobs:
           & 'C:\mozilla-build\python3\python.exe' -m pip install --only-binary=:all: 'zstandard==0.25.0'
           if ($LASTEXITCODE -ne 0) { throw "Artifact dependency installation failed: $LASTEXITCODE" }
 
+      - name: Cache pinned Gecko and toolchain downloads
+        if: steps.baseline.outputs.reuse != 'true'
+        uses: actions/cache@v4
+        with:
+          # These are the pinned upstream download caches, not Orbit's source,
+          # object directory, generated interface archives, or packaged browser.
+          path: |
+            C:/orbit-mozbuild/package-frontend
+            C:/orbit-mozbuild/toolchains
+          key: orbit-mozbuild-downloads-v1-windows-2022-${{ runner.arch }}-${{ hashFiles('firefox-source.json', 'configs/mozconfig', 'scripts/build.py', 'scripts/windows-build.sh', '.github/workflows/windows-prototype.yml') }}
+
       - name: Build pinned Gecko with Orbit native UI
         if: steps.baseline.outputs.reuse != 'true'
         shell: pwsh
@@ -171,6 +190,10 @@ jobs:
         shell: pwsh
         run: python scripts/smoke_test.py --binary artifacts/Orbit/orbit.exe --report test-results/smoke.json
 
+      - name: Verify native radial page actions and held tab switching
+        shell: pwsh
+        run: python scripts/smoke_radial.py --binary artifacts/Orbit/orbit.exe --report test-results/radial/smoke.json
+
       - name: Package the lightweight interface update
         shell: pwsh
         run: python scripts/package_update.py --package artifacts/Orbit --output artifacts/update --commit $env:GITHUB_SHA
@@ -216,6 +239,10 @@ jobs:
           python scripts/smoke_test.py --binary artifacts/Orbit-Update-Check/orbit.exe --report test-results/updated/smoke.json
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (Test-Path artifacts/Orbit-Update-Check/browser/.purgecaches) { throw 'Firefox did not consume the interface cache invalidation marker' }
+
+      - name: Verify radial gestures after updating an existing installation
+        shell: pwsh
+        run: python scripts/smoke_radial.py --binary artifacts/Orbit-Update-Check/orbit.exe --report test-results/updated/radial/smoke.json
 
       - name: Upload tested lightweight update and setup
         uses: actions/upload-artifact@v4
@@ -285,6 +312,8 @@ jobs:
         run: |
           cat > release-notes.md <<'EOF'
           Close Orbit, then run Update-Orbit.cmd to test the latest verified interface.
+
+          Quick right-click on a webpage opens Orbit's radial page actions. Open in new tab is in the center. Hover a submenu to reveal an outer ring. Hold the right button to explore open tabs, hover a tab, then release to switch; tab groups and More open further rings.
 
           For an existing installation, download Orbit-Update-Setup.zip and extract its two files beside orbit.exe once. Future interface changes download only the small UI package; your existing profile and Gecko engine are kept.
 
