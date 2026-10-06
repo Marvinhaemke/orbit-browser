@@ -211,6 +211,28 @@ def focus_content_for_document_key(driver):
     wait_for(driver, "return document.hasFocus();", "the content actor's trusted click focuses the actual remote webpage")
 
 
+def prepare_single_document_f6_fixture(driver, result, label):
+    """Single-press F6 tests use one document; Firefox normally cycles frames."""
+    driver.set_context("content")
+    result.setdefault("f6_fixture_documents", {})[label] = driver.execute_script('''
+        const frame = document.getElementById("remote-frame");
+        window.orbitUXF6DetachedFrame = frame && {frame, parent: frame.parentNode, next: frame.nextSibling};
+        const before = document.querySelectorAll("iframe").length;
+        frame?.remove();
+        return {url: location.href, framesBefore: before, framesAfter: document.querySelectorAll("iframe").length,
+            focused: document.hasFocus(), active: {tag: document.activeElement?.localName, id: document.activeElement?.id}};
+    ''')
+    assert result["f6_fixture_documents"][label]["framesAfter"] == 0
+
+
+def restore_f6_fixture_frame(driver):
+    driver.set_context("content")
+    driver.execute_script('''const saved = window.orbitUXF6DetachedFrame;
+        if (saved?.frame && saved.parent.isConnected) saved.parent.insertBefore(saved.frame, saved.next);
+        delete window.orbitUXF6DetachedFrame;''')
+    driver.set_context("chrome")
+
+
 def diagnose_focus_f6(driver, result, folder):
     """Probe native F6 reveal timing after failure; the caller still raises it."""
     driver.set_context("chrome")
@@ -557,6 +579,7 @@ def run_focus_checks(driver, handle, url, result, folder):
     assert focus_state(driver)["addressVisibility"] == "visible"
     # Document traversal belongs to the focused remote document. Sending F6
     # through Marionette's chrome context instead targets its browser widget.
+    prepare_single_document_f6_fixture(driver, result, "ordinary")
     focus_content_for_document_key(driver)
     chord(driver, Keys.F6)
     driver.set_context("chrome")
@@ -567,6 +590,7 @@ def run_focus_checks(driver, handle, url, result, folder):
     wait_for(driver, "return document.hasFocus();", "ordinary native Shift+F6 returns focus to the actual webpage")
     driver.set_context("chrome")
     assert not driver.execute_script("return gURLBar.focused;")
+    restore_f6_fixture_frame(driver)
     original = driver.execute_script('''
         window.orbitUXNativeAddress = document.getElementById("urlbar-container");
         window.orbitUXNativeWindowBoxes = [...document.querySelectorAll(".titlebar-buttonbox-container")]
@@ -706,6 +730,7 @@ def run_focus_checks(driver, handle, url, result, folder):
     wait_focus_idle(driver)
     checks.append("The expanded address island keeps real top-layer Firefox autocomplete, Escape-to-dismiss, Ctrl+L selection, and trusted suggestion navigation without leaving focus mode")
 
+    prepare_single_document_f6_fixture(driver, result, "focus")
     for label, values in (("Alt+D", (Keys.ALT, "d")),
                           ("Ctrl+K", (Keys.CONTROL, "k")), ("F6", (Keys.F6,))):
         driver.set_context("content")
@@ -740,6 +765,7 @@ def run_focus_checks(driver, handle, url, result, folder):
         move_to_content(driver, click=True)
         wait_focus_idle(driver)
     checks.append("Native Alt+D and Ctrl+K retain address/search focus; trusted content-origin F6 and reverse Shift+F6 preserve ordinary Firefox document traversal in focus mode")
+    restore_f6_fixture_frame(driver)
 
     driver.execute_script('''
         window.orbitUXCustomizableUI = ChromeUtils.importESModule(
