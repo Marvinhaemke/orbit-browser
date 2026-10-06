@@ -191,9 +191,72 @@ def record_focus_probe(driver, result, label):
     try:
         driver.set_context("content")
         probe["contentEvents"] = driver.execute_script("return window.orbitSmokeInputEvents || [];")
+        probe["contentKeyEvents"] = driver.execute_script("return window.orbitUXContentKeyEvents || [];")
     finally:
         driver.set_context("chrome")
     result.setdefault("focus_probes", {})[label] = probe
+
+
+def diagnose_focus_f6(driver, result, folder):
+    """Probe native F6 reveal timing after failure; the caller still raises it."""
+    driver.set_context("chrome")
+    scope = ':root[data-orbit-focus="true"]'
+    variants = {
+        "a-visible-toolbox": {"css": f"{scope} #navigator-toolbox {{ visibility: visible !important; }}"},
+        "b-visible-expanded-address": {"css": f'''{scope} #urlbar-container[data-orbit-focus-address="true"] {{
+            visibility: visible !important; opacity: 1 !important; pointer-events: auto !important;
+            top: 12px !important; width: min(780px, calc(100vw - 336px)) !important;
+            left: calc(50% - min(780px, calc(100vw - 336px)) / 2) !important;
+        }}'''},
+        "c-document-keypress": {"target": "document", "event": "keypress"},
+        "d-window-keydown": {"target": "window", "event": "keydown"},
+        "e-idle-native-focusability": {"css": f'''{scope} #urlbar-container[data-orbit-focus-address="true"] {{
+            visibility: visible !important;
+        }}'''},
+    }
+    for name, variant in variants.items():
+        entry = result.setdefault("focus_f6_probes", {}).setdefault(name, {})
+        try:
+            move_to_content(driver, click=True)
+            wait_focus_idle(driver)
+            driver.execute_script('''
+                const options = arguments[0];
+                if (options.css) {
+                    const sheet = document.createElementNS("http://www.w3.org/1999/xhtml", "style");
+                    sheet.id = "orbit-smoke-f6-probe"; sheet.textContent = options.css;
+                    document.documentElement.append(sheet);
+                } else {
+                    const target = options.target === "document" ? document : window;
+                    const callback = event => {
+                        if (!event.isTrusted || event.key !== "F6") return;
+                        document.documentElement.setAttribute("data-orbit-focus-address-visible", "true");
+                        document.documentElement.setAttribute("data-orbit-focus-address-expanded", "true");
+                    };
+                    target.addEventListener(options.event, callback, true);
+                    window.orbitUXF6ProbeCleanup = () => target.removeEventListener(options.event, callback, true);
+                }
+            ''', script_args=[variant])
+            record_focus_probe(driver, result, f"f6-{name}-before")
+            chord(driver, Keys.F6)
+            settle_radial(driver)
+            record_focus_probe(driver, result, f"f6-{name}-after")
+            entry["state"] = focus_state(driver)
+            screenshot(driver, folder, f"ux-focus-f6-{name}", result)
+        except Exception:
+            entry["error"] = traceback.format_exc()
+        finally:
+            driver.set_context("chrome")
+            driver.execute_script('''
+                window.orbitUXF6ProbeCleanup?.(); delete window.orbitUXF6ProbeCleanup;
+                document.getElementById("orbit-smoke-f6-probe")?.remove();
+            ''')
+            if driver.execute_script("return gURLBar.view.isOpen || gURLBar.focused;"):
+                chord(driver, Keys.ESCAPE)
+                settle_radial(driver)
+            move_to_content(driver, click=True)
+            wait_focus_idle(driver)
+    result["f6_diagnostics_removed"] = driver.execute_script('''return !window.orbitUXF6ProbeCleanup &&
+        !document.getElementById("orbit-smoke-f6-probe");''')
 
 
 def diagnose_focus_hit_testing(driver, result, folder):
@@ -346,6 +409,36 @@ def assert_focus_geometry(state, compact=None):
             assert box["radius"] != "0px" and box["shadow"] != "none", state
 
 
+def click_native_window_command(driver, command, result):
+    """Click the current original XUL window button through its real hit point."""
+    driver.set_context("chrome")
+    hit = driver.execute_script('''
+        const owner = document.querySelector('[data-orbit-focus-window-controls="true"]');
+        const node = owner?.querySelector(".titlebar-" + arguments[0]);
+        const rect = node?.getBoundingClientRect();
+        const style = node && getComputedStyle(node);
+        if (!node || !rect.width || !rect.height || style.visibility !== "visible" || style.display === "none")
+            throw new Error("The original native window command is not visible: " + arguments[0]);
+        if (!window.orbitUXNativeWindowButtons.includes(node))
+            throw new Error("The window island substituted a new command button");
+        const x = Math.round(rect.x + rect.width / 2), y = Math.round(rect.y + rect.height / 2);
+        const target = document.elementFromPoint(x, y);
+        if (target !== node && !node.contains(target))
+            throw new Error("The corner sensor or another surface intercepts the native window command");
+        return {point: {x, y}, nativeClass: node.getAttribute("class"),
+            windowState: window.windowState, outerWidth, outerHeight,
+            nativeCommand: node.getAttribute("oncommand"), nativeClick: node.getAttribute("onclick")};
+    ''', script_args=[command])
+    pointer(driver).pointer_move(hit["point"]["x"], hit["point"]["y"], duration=35, origin="viewport").click().perform()
+    expected = "STATE_MAXIMIZED" if command == "max" else "STATE_NORMAL"
+    wait_for(driver, 'return window.windowState === window[arguments[0]];',
+             f"the trusted original window button executes the native {command} command", [expected])
+    settle_radial(driver)
+    hit["after"] = driver.execute_script('return {windowState: window.windowState, outerWidth, outerHeight};')
+    result.setdefault("native_window_commands", {})[command] = hit
+    assert focus_state(driver)["enabled"]
+
+
 def tools_state(driver):
     return driver.execute_script('''
         const root = document.getElementById(arguments[0]);
@@ -450,17 +543,28 @@ def run_focus_checks(driver, handle, url, result, folder):
         window.orbitUXNativeAddress = document.getElementById("urlbar-container");
         window.orbitUXNativeWindowBoxes = [...document.querySelectorAll(".titlebar-buttonbox-container")]
             .map(node => ({node, parent: node.parentNode, next: node.nextSibling}));
+        window.orbitUXNativeWindowButtons = window.orbitUXNativeWindowBoxes
+            .flatMap(({node}) => [...node.querySelectorAll(".titlebar-button")]);
         const box = gBrowser.selectedBrowser.getBoundingClientRect();
         return {contentTop: box.y, contentHeight: box.height};
     ''')
     install_extension_fixture(driver, folder)
     driver.execute_script('''
         window.orbitUXFocusEvents = [];
-        const describe = node => ({tag: node?.localName, id: node?.id});
-        for (const type of ["pointerdown", "pointerup", "mousedown", "mouseup", "click", "focus", "focusin", "blur", "focusout"]) {
-            window.addEventListener(type, event => {
+        const describe = node => ({tag: node?.localName, id: node?.id, classes: node?.getAttribute?.("class")});
+        for (const type of ["pointerdown", "pointerup", "mousedown", "mouseup", "click", "command", "focus", "focusin", "blur", "focusout", "keydown", "keypress", "keyup"]) {
+            for (const [scope, target] of [["window", window], ...(type.startsWith("key") ? [["document", document]] : [])]) target.addEventListener(type, event => {
                 if (!document.documentElement.hasAttribute("data-orbit-focus")) return;
-                window.orbitUXFocusEvents.push({type, trusted: event.isTrusted, time: performance.now(),
+                const activeWindow = Services.focus.activeWindow, focusedWindow = Services.focus.focusedWindow;
+                window.orbitUXFocusEvents.push({type, scope, trusted: event.isTrusted, time: performance.now(),
+                    key: event.key, code: event.code, keyCode: event.keyCode, defaultPrevented: event.defaultPrevented,
+                    phase: event.eventPhase, targetDocument: event.target?.ownerDocument?.documentURI,
+                    activeWindowIsChrome: activeWindow === window, focusedWindowIsChrome: focusedWindow === window,
+                    activeWindowURI: activeWindow?.document?.documentURI,
+                    focusedWindowURI: focusedWindow?.document?.documentURI,
+                    rootFocus: Object.fromEntries([...document.documentElement.attributes]
+                        .filter(attribute => attribute.name.startsWith("data-orbit-focus"))
+                        .map(attribute => [attribute.name, attribute.value])),
                     target: describe(event.target), path: event.composedPath().map(describe),
                     clientX: event.clientX, clientY: event.clientY,
                     screenX: event.screenX, screenY: event.screenY,
@@ -491,6 +595,13 @@ def run_focus_checks(driver, handle, url, result, folder):
     assert_focus_geometry(compact)
     assert compact["addressVisible"] and not compact["addressExpanded"] and not compact["focusedAddress"], compact
     assert not compact["windowVisible"] and not compact["toolsVisible"], compact
+    # The revealed bar shrinks its approach sensor. A stationary pointer must
+    # stay usable after the 350ms conceal timer, without repeated mouse input.
+    driver.execute_async_script('const done = arguments[arguments.length - 1]; setTimeout(() => done(true), 800);')
+    stationary = focus_state(driver)
+    assert stationary["addressVisible"] and not stationary["addressExpanded"] and not stationary["focusedAddress"], stationary
+    assert not stationary["windowVisible"] and not stationary["toolsVisible"], stationary
+    result["stationary_address_hover"] = stationary
     assert driver.execute_script('''
         const input = gURLBar.inputField, box = input.getBoundingClientRect();
         const target = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
@@ -509,7 +620,23 @@ def run_focus_checks(driver, handle, url, result, folder):
     screenshot(driver, folder, "ux-focus-initial-address-expanded", result)
     assert_focus_geometry(expanded, compact)
     assert not expanded["windowVisible"] and not expanded["toolsVisible"], expanded
-    checks.append("Approaching the top center reveals a compact floating address island; clicking it expands and focuses the original Firefox URL bar independently")
+    move_to_content(driver, click=True)
+    wait_focus_idle(driver)
+    hover_focus_zone(driver, "address")
+    padding = driver.execute_script('''const box = document.getElementById("urlbar-container").getBoundingClientRect();
+        return {x: Math.round(box.x + 8), y: Math.round(box.y + box.height / 2)};''')
+    pointer(driver).pointer_move(padding["x"], padding["y"], duration=35, origin="viewport").click().perform()
+    wait_for(driver, 'return document.documentElement.getAttribute("data-orbit-focus-address-expanded") === "true";',
+             "a trusted click on the native island's padding expands the address island")
+    record_focus_probe(driver, result, "padding-after-click")
+    move_to_content(driver, click=True)
+    wait_focus_idle(driver)
+    hover_focus_zone(driver, "address")
+    left_click(driver, "urlbar-container")
+    wait_for(driver, '''return gURLBar.focused &&
+        document.documentElement.getAttribute("data-orbit-focus-address-expanded") === "true";''',
+             "the original address field refocuses after checking padding")
+    checks.append("Approaching the top center reveals a stable compact address island, stationary hover stays usable, island padding expands it, and clicking the original Firefox field focuses it independently")
 
     chord(driver, Keys.CONTROL, "a")
     address = driver.execute_script("return gURLBar.inputField;")
@@ -553,7 +680,23 @@ def run_focus_checks(driver, handle, url, result, folder):
 
     for label, values in (("Alt+D", (Keys.ALT, "d")),
                           ("Ctrl+K", (Keys.CONTROL, "k")), ("F6", (Keys.F6,))):
+        driver.set_context("content")
+        driver.execute_script('''
+            if (!window.orbitUXContentKeyEvents) {
+                window.orbitUXContentKeyEvents = [];
+                for (const type of ["keydown", "keypress", "keyup"]) window.addEventListener(type, event => {
+                    window.orbitUXContentKeyEvents.push({type, trusted: event.isTrusted, key: event.key,
+                        code: event.code, keyCode: event.keyCode, defaultPrevented: event.defaultPrevented,
+                        time: performance.now(), active: document.activeElement?.id});
+                }, true);
+            }
+        ''')
+        driver.set_context("chrome")
+        if label == "F6":
+            record_focus_probe(driver, result, "native-f6-before")
         chord(driver, *values)
+        if label == "F6":
+            record_focus_probe(driver, result, "native-f6-immediate-after")
         wait_for(driver, '''return gURLBar.focused &&
             document.documentElement.getAttribute("data-orbit-focus-address-expanded") === "true";''',
                  f"{label} keeps its real native address/search focus in the floating island")
@@ -611,9 +754,14 @@ def run_focus_checks(driver, handle, url, result, folder):
         return [...document.querySelectorAll('[data-orbit-focus-window-controls="true"]')]
             .every(node => window.orbitUXNativeWindowBoxes.some(entry => entry.node === node));
     '''), "The window island must expose original OS controls rather than cloned buttons"
+    assert driver.execute_script("return window.windowState === window.STATE_NORMAL;"), "The fixture starts in a restored window"
+    click_native_window_command(driver, "max", result)
+    assert_focus_geometry(hover_focus_zone(driver, "window"))
+    click_native_window_command(driver, "restore", result)
+    assert_focus_geometry(hover_focus_zone(driver, "window"))
     move_to_content(driver)
     wait_focus_idle(driver)
-    checks.append("Approaching the top right independently reveals rounded original minimize, maximize, and close controls; leaving the island hides them")
+    checks.append("Top-right hover independently reveals original OS controls, trusted native maximize and restore buttons execute their real window commands, and leaving the island hides them")
 
     state = open_tools(driver)
     assert state["mode"] == "focus-tools" and state["items"], state
@@ -1084,6 +1232,8 @@ def main():
                 screenshot(driver, report.parent, "ux-failure", result)
                 if "a trusted click expands and focuses the original native address bar" in result["error"]:
                     diagnose_focus_hit_testing(driver, result, report.parent)
+                if "F6 keeps its real native address/search focus" in result["error"]:
+                    diagnose_focus_f6(driver, result, report.parent)
             except Exception:
                 result["capture_error"] = traceback.format_exc()
         raise
