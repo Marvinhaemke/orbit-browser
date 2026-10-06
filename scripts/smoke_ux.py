@@ -915,8 +915,20 @@ def run_focus_checks(driver, handle, url, result, folder):
     wait_for(driver, 'return document.getElementById("unified-extensions-panel")?.state === "open";',
              "the tools Extensions panel leaf opens Firefox's original extension-management popup")
     assert_native_popup_anchor(driver, "unified-extensions-panel")
-    wait_for(driver, '''return [...document.querySelectorAll("unified-extensions-item")]
-        .some(node => node.getAttribute("extension-id") === arguments[0]);''',
+    wait_for(driver, '''
+        const panel = document.getElementById("unified-extensions-panel");
+        const policy = WebExtensionPolicy.getByID(arguments[0]);
+        const action = policy && gUnifiedExtensions.browserActionFor(policy);
+        const node = action?.widget?.forWindow(window)?.node;
+        const button = node?.querySelector(".unified-extensions-item-action-button");
+        const box = node?.getBoundingClientRect(), buttonBox = button?.getBoundingClientRect();
+        return policy?.active && policy.id === arguments[0] && policy.canAccessWindow(window) &&
+            node?.isConnected && node.ownerDocument === document && panel.contains(node) &&
+            node.classList.contains("unified-extensions-item") && node.dataset.extensionid === arguments[0] &&
+            button?.dataset.extensionid === arguments[0] && box.width > 0 && box.height > 0 &&
+            buttonBox.width > 0 && buttonBox.height > 0 &&
+            getComputedStyle(node).visibility === "visible" && getComputedStyle(button).visibility === "visible";
+    ''',
              "the native extension panel contains the actual temporary extension", [EXTENSION_ID])
     assert focus_state(driver)["enabled"]
     chord(driver, Keys.ESCAPE)
