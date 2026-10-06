@@ -359,6 +359,13 @@
 #orbit-focus-address-hotzone { width: min(320px, calc(100vw - 144px)); left: 50%; margin-left: calc(min(320px, calc(100vw - 144px)) / -2); }
 #orbit-focus-tools-hotzone { left: 0; }
 #orbit-focus-window-hotzone { right: 0; }
+/* The sensors are outside Firefox's paint-contained body. Once an island is
+   visible, retain its approach strip above the island without covering the
+   original address input or native window buttons with an invisible target. */
+:root[data-orbit-focus="true"][data-orbit-focus-address-visible="true"] #orbit-focus-address-hotzone,
+:root[data-orbit-focus="true"][data-orbit-focus-window-visible="true"] #orbit-focus-window-hotzone {
+  height: 12px;
+}
 #orbit-focus-tools-trigger {
   appearance: none;
   position: fixed;
@@ -421,6 +428,10 @@
   pointer-events: auto;
 }
 @media (max-width: 700px) {
+  /* The narrow-window address island sits below the corner controls. */
+  :root[data-orbit-focus="true"][data-orbit-focus-address-visible="true"] #orbit-focus-address-hotzone {
+    height: 40px;
+  }
   :root[data-orbit-focus="true"]:not([data-orbit-focus-reveal="true"], [data-orbit-focus-measuring="true"])
   #urlbar-container[data-orbit-focus-address="true"] {
     --orbit-focus-address-width: min(440px, calc(100vw - 32px));

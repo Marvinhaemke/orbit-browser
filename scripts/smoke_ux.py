@@ -491,6 +491,11 @@ def run_focus_checks(driver, handle, url, result, folder):
     assert_focus_geometry(compact)
     assert compact["addressVisible"] and not compact["addressExpanded"] and not compact["focusedAddress"], compact
     assert not compact["windowVisible"] and not compact["toolsVisible"], compact
+    assert driver.execute_script('''
+        const input = gURLBar.inputField, box = input.getBoundingClientRect();
+        const target = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+        return document.getElementById("urlbar-container").contains(target);
+    '''), "The approach sensor must not intercept clicks on the revealed native input"
     record_focus_probe(driver, result, "compact-before-click")
     screenshot(driver, folder, "ux-focus-initial-address-compact", result)
     left_click(driver, "urlbar-container")
