@@ -1,0 +1,234 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+
+/* These surfaces live exclusively in browser.xhtml. Custom Firefox themes
+   supply their own toolbar colors; Orbit's default uses the shared palette. */
+#orbit-command-palette, #orbit-focus-chip {
+  --orbit-action-base: var(--toolbar-background-color, #e9eef5);
+  --orbit-action-ink: var(--toolbar-text-color, #253247);
+  --orbit-action-muted: color-mix(in srgb, var(--orbit-action-ink) 68%, var(--orbit-action-base));
+  --orbit-action-shadow: color-mix(in srgb, var(--orbit-action-base) 75%, #0a172b);
+  --orbit-action-highlight: color-mix(in srgb, var(--orbit-action-base) 58%, white);
+  --orbit-action-line: color-mix(in srgb, var(--orbit-action-ink) 16%, transparent);
+  --orbit-action-accent: #70ded3;
+  --orbit-action-ease: cubic-bezier(.18,.88,.24,1);
+  color: var(--orbit-action-ink);
+  font: menu;
+  box-sizing: border-box;
+}
+:root[data-orbit-theme="default"] :is(#orbit-command-palette, #orbit-focus-chip) {
+  --orbit-action-base: var(--orbit-chrome-base);
+  --orbit-action-ink: var(--orbit-chrome-ink);
+  --orbit-action-muted: var(--orbit-chrome-muted);
+  --orbit-action-shadow: var(--orbit-chrome-shadow);
+  --orbit-action-highlight: var(--orbit-chrome-highlight);
+  --orbit-action-line: var(--orbit-chrome-line);
+}
+#orbit-command-palette[hidden], #orbit-focus-chip[hidden],
+#orbit-command-empty[hidden] { display: none !important; }
+#orbit-command-palette {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483645;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: clamp(24px, 15vh, 160px) 24px 24px;
+  background: #0913233d;
+  backdrop-filter: blur(7px);
+  animation: orbit-command-backdrop-in 180ms ease;
+}
+#orbit-command-panel {
+  width: min(640px, 100%);
+  max-height: min(650px, 76vh);
+  display: flex;
+  flex-direction: column;
+  padding: 18px;
+  gap: 12px;
+  overflow: hidden;
+  box-sizing: border-box;
+  border: 1px solid var(--orbit-action-line);
+  border-radius: 28px;
+  background: var(--orbit-action-base);
+  box-shadow: 12px 20px 60px #060c1d38,
+    5px 5px 18px var(--orbit-action-shadow),
+    inset 0 1px 0 var(--orbit-action-highlight);
+  animation: orbit-command-surface-in 230ms var(--orbit-action-ease);
+}
+.orbit-command-header { display: flex; align-items: center; gap: 10px; }
+.orbit-command-mark { width: 26px; height: 26px; }
+#orbit-command-title { flex: 1; font-size: 16px; font-weight: 650; margin: 0; }
+#orbit-command-close, #orbit-focus-chip button {
+  appearance: none;
+  font: inherit;
+  color: inherit;
+  background: var(--orbit-action-base);
+  border: 1px solid var(--orbit-action-line);
+  border-radius: 12px;
+  padding: 6px 10px;
+  cursor: pointer;
+  box-shadow: 2px 2px 5px var(--orbit-action-shadow),
+    -2px -2px 5px var(--orbit-action-highlight);
+  transition: box-shadow 160ms var(--orbit-action-ease), border-color 160ms ease;
+}
+#orbit-command-close:hover, #orbit-focus-chip button:hover {
+  border-color: var(--orbit-action-accent);
+}
+#orbit-command-close:active, #orbit-focus-chip button:active {
+  box-shadow: inset 2px 2px 4px var(--orbit-action-shadow),
+    inset -2px -2px 4px var(--orbit-action-highlight);
+}
+#orbit-command-input {
+  width: 100%;
+  min-height: 48px;
+  box-sizing: border-box;
+  appearance: none;
+  font: inherit;
+  font-size: 15px;
+  color: var(--orbit-action-ink);
+  background: var(--orbit-action-base);
+  padding: 12px 16px;
+  border: 1px solid var(--orbit-action-line);
+  border-radius: 16px;
+  box-shadow: inset 3px 3px 7px var(--orbit-action-shadow),
+    inset -3px -3px 7px var(--orbit-action-highlight);
+}
+#orbit-command-input::placeholder { color: var(--orbit-action-muted); opacity: 1; }
+#orbit-command-input:focus-visible {
+  outline: 2px solid var(--orbit-action-accent);
+  outline-offset: 2px;
+}
+#orbit-command-results { overflow-y: auto; min-height: 0; padding: 4px; }
+.orbit-command-result {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  appearance: none;
+  text-align: start;
+  padding: 11px 12px;
+  margin: 0 0 4px;
+  border: 1px solid transparent;
+  border-radius: 16px;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+  transition: background-color 160ms ease, box-shadow 180ms var(--orbit-action-ease);
+}
+.orbit-command-result[aria-selected="true"], .orbit-command-result:hover {
+  background: color-mix(in srgb, var(--orbit-action-accent) 15%, var(--orbit-action-base));
+  border-color: var(--orbit-action-line);
+  box-shadow: 2px 2px 6px var(--orbit-action-shadow),
+    -2px -2px 6px var(--orbit-action-highlight);
+}
+.orbit-command-kind {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 10px;
+  background: var(--orbit-action-base);
+  box-shadow: inset 1px 1px 3px var(--orbit-action-shadow),
+    inset -1px -1px 3px var(--orbit-action-highlight);
+  font-size: 17px;
+}
+.orbit-command-copy { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.orbit-command-label { font-size: 13px; font-weight: 600; }
+.orbit-command-detail {
+  font-size: 11px;
+  color: var(--orbit-action-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#orbit-command-empty { padding: 18px 12px; color: var(--orbit-action-muted); }
+.orbit-command-hint { margin: 0; text-align: center; font-size: 11px; color: var(--orbit-action-muted); }
+
+/* Keep the native titlebar and OS window buttons. Only the navigation and
+   bookmarks rows collapse; tab controls recede while the titlebar remains. */
+:root[data-orbit-focus="true"] #navigator-toolbox :is(#nav-bar, #PersonalToolbar) {
+  transition: opacity 180ms var(--orbit-chrome-ease, ease),
+    max-height 220ms var(--orbit-chrome-ease, ease), padding 220ms ease;
+}
+:root[data-orbit-focus="true"]:not([data-orbit-focus-reveal="true"])
+#navigator-toolbox #PersonalToolbar,
+:root[data-orbit-focus="true"]:not([data-orbit-focus-reveal="true"]):not([data-orbit-focus-nav-titlebar])
+#navigator-toolbox #nav-bar {
+  min-height: 0 !important;
+  max-height: 0 !important;
+  padding-block: 0 !important;
+  border-block-width: 0 !important;
+  overflow: hidden !important;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+:root[data-orbit-focus="true"][data-orbit-focus-nav-titlebar]:not([data-orbit-focus-reveal="true"])
+#nav-bar > :not(.titlebar-buttonbox-container, .titlebar-spacer) {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+:root[data-orbit-focus="true"]:not([data-orbit-focus-reveal="true"])
+#TabsToolbar :is(#tabbrowser-tabs, #tabs-newtab-button, #new-tab-button,
+  #alltabs-button, #firefox-view-button, #tabbrowser-arrowscrollbox-periphery,
+  #TabsToolbar-customization-target > .toolbarbutton-1) {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+#orbit-focus-chip {
+  position: fixed;
+  inset-block-end: 16px;
+  inset-inline-end: 18px;
+  z-index: 2147483644;
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--orbit-action-line);
+  border-radius: 18px;
+  background: var(--orbit-action-base);
+  box-shadow: 5px 7px 18px var(--orbit-action-shadow),
+    inset 0 1px 0 var(--orbit-action-highlight);
+  animation: orbit-command-surface-in 220ms var(--orbit-action-ease);
+}
+#orbit-focus-chip button { font-size: 11px; }
+:is(#orbit-command-close, #orbit-focus-chip button):focus-visible {
+  outline: 2px solid var(--orbit-action-accent);
+  outline-offset: 2px;
+}
+@keyframes orbit-command-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes orbit-command-surface-in {
+  from { opacity: 0; transform: translateY(8px) scale(.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  #orbit-command-palette, #orbit-command-panel, #orbit-focus-chip,
+  #orbit-command-close, #orbit-command-input, .orbit-command-result,
+  #orbit-focus-chip button,
+  :root[data-orbit-focus="true"] #navigator-toolbox :is(#nav-bar, #PersonalToolbar) {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+@media (forced-colors: active) {
+  #orbit-command-palette, #orbit-focus-chip {
+    --orbit-action-base: Canvas;
+    --orbit-action-ink: CanvasText;
+    --orbit-action-muted: CanvasText;
+    --orbit-action-line: ButtonText;
+    --orbit-action-shadow: transparent;
+    --orbit-action-highlight: transparent;
+    --orbit-action-accent: Highlight;
+  }
+  #orbit-command-palette { background: transparent; backdrop-filter: none; }
+  .orbit-command-result[aria-selected="true"] {
+    background: Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
+  }
+  .orbit-command-result[aria-selected="true"] .orbit-command-detail { color: HighlightText; }
+}

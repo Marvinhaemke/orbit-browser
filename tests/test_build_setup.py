@@ -42,6 +42,7 @@ class SourceGuardTests(unittest.TestCase):
             destination.write_text(text, encoding="utf-8", newline="\n")
         for path in (
             "browser/components/orbit/Orbit.sys.mjs",
+            "browser/components/orbit/OrbitInteractions.sys.mjs",
             "browser/components/orbit/OrbitRadial.sys.mjs",
             "browser/components/orbit/OrbitRadialView.sys.mjs",
             "browser/components/orbit/OrbitRadialChild.sys.mjs",
@@ -54,6 +55,8 @@ class SourceGuardTests(unittest.TestCase):
             "browser/base/content/orbit/orbit.svg",
             "browser/base/content/orbit/orbit-radial.css",
             "browser/base/content/orbit/orbit-chrome.css",
+            "browser/base/content/orbit/orbit-interactions.css",
+            "browser/base/content/orbit/orbit-commands.svg",
             "browser/branding/unofficial/content/about-logo.svg",
             "browser/branding/unofficial/content/about-wordmark.svg",
             "browser/branding/unofficial/content/firefox-wordmark.svg",
@@ -90,7 +93,9 @@ class SourceGuardTests(unittest.TestCase):
         self.assertIn("content/browser/orbit/orbit.svg", (self.source / "browser/base/jar.mn").read_text(encoding="utf-8"))
         self.assertIn("content/browser/orbit/orbit-radial.css (content/orbit/orbit-radial.css)", (self.source / "browser/base/jar.mn").read_text(encoding="utf-8"))
         self.assertIn("content/browser/orbit/orbit-chrome.css", (self.source / "browser/base/jar.mn").read_text(encoding="utf-8"))
-        for name in ("OrbitRadial.sys.mjs", "OrbitRadialView.sys.mjs", "OrbitRadialChild.sys.mjs", "OrbitRadialParent.sys.mjs", "OrbitTheme.sys.mjs"):
+        self.assertIn("content/browser/orbit/orbit-interactions.css", (self.source / "browser/base/jar.mn").read_text(encoding="utf-8"))
+        self.assertIn("content/browser/orbit/orbit-commands.svg", (self.source / "browser/base/jar.mn").read_text(encoding="utf-8"))
+        for name in ("OrbitRadial.sys.mjs", "OrbitRadialView.sys.mjs", "OrbitRadialChild.sys.mjs", "OrbitRadialParent.sys.mjs", "OrbitTheme.sys.mjs", "OrbitInteractions.sys.mjs"):
             self.assertEqual((self.source / "browser/components/orbit" / name).read_text(encoding="utf-8"), "test overlay\n")
 
     def test_upstream_drift_aborts_without_partial_writes(self):
@@ -112,6 +117,7 @@ class SourceGuardTests(unittest.TestCase):
 
     def test_missing_radial_resource_aborts_before_upstream_edits(self):
         for path in (
+            "browser/components/orbit/OrbitInteractions.sys.mjs",
             "browser/components/orbit/OrbitRadial.sys.mjs",
             "browser/components/orbit/OrbitRadialView.sys.mjs",
             "browser/components/orbit/OrbitRadialChild.sys.mjs",
@@ -119,6 +125,8 @@ class SourceGuardTests(unittest.TestCase):
             "browser/components/orbit/OrbitTheme.sys.mjs",
             "browser/base/content/orbit/orbit-radial.css",
             "browser/base/content/orbit/orbit-chrome.css",
+            "browser/base/content/orbit/orbit-interactions.css",
+            "browser/base/content/orbit/orbit-commands.svg",
         ):
             with self.subTest(path=path):
                 resource = self.root / "overlay" / path
@@ -143,11 +151,11 @@ class PackageGuardTests(unittest.TestCase):
             (folder / name).write_bytes(b"native-package-test-fixture")
         (folder / "application.ini").write_text("[App]\nName=Orbit\n", encoding="utf-8")
         with zipfile.ZipFile(folder / "omni.ja", "w") as archive:
-            for name in ("Orbit.sys.mjs", "OrbitRadial.sys.mjs", "OrbitRadialView.sys.mjs", "OrbitRadialChild.sys.mjs", "OrbitRadialParent.sys.mjs", "OrbitTheme.sys.mjs"):
+            for name in ("Orbit.sys.mjs", "OrbitRadial.sys.mjs", "OrbitRadialView.sys.mjs", "OrbitRadialChild.sys.mjs", "OrbitRadialParent.sys.mjs", "OrbitTheme.sys.mjs", "OrbitInteractions.sys.mjs"):
                 if name != omitted:
                     archive.writestr(f"moz-src/browser/components/orbit/{name}", "fixture")
         with zipfile.ZipFile(folder / "browser/omni.ja", "w") as archive:
-            for name in ("orbit.html", "orbit.css", "orbit.js", "orbit.svg", "orbit-radial.css", "orbit-chrome.css"):
+            for name in ("orbit.html", "orbit.css", "orbit.js", "orbit.svg", "orbit-radial.css", "orbit-chrome.css", "orbit-interactions.css", "orbit-commands.svg"):
                 if name != omitted:
                     archive.writestr(f"chrome/browser/content/browser/orbit/{name}", "fixture")
             for name in ("about-logo.svg", "about-wordmark.svg", "firefox-wordmark.svg", "aboutDialog.css"):
@@ -155,7 +163,7 @@ class PackageGuardTests(unittest.TestCase):
                     archive.writestr(f"chrome/browser/content/branding/{name}", "fixture")
 
     def test_package_without_a_required_radial_resource_is_rejected(self):
-        for name in ("OrbitRadial.sys.mjs", "OrbitRadialView.sys.mjs", "OrbitRadialChild.sys.mjs", "OrbitRadialParent.sys.mjs", "OrbitTheme.sys.mjs", "orbit-radial.css", "orbit-chrome.css", "about-logo.svg"):
+        for name in ("OrbitRadial.sys.mjs", "OrbitRadialView.sys.mjs", "OrbitRadialChild.sys.mjs", "OrbitRadialParent.sys.mjs", "OrbitTheme.sys.mjs", "orbit-radial.css", "orbit-chrome.css", "OrbitInteractions.sys.mjs", "orbit-interactions.css", "orbit-commands.svg", "about-logo.svg"):
             with self.subTest(resource=name), tempfile.TemporaryDirectory() as directory:
                 folder = Path(directory)
                 self.native_fixture(folder, omitted=name)

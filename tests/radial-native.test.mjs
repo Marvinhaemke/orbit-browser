@@ -17,7 +17,10 @@ class View {
   hide(reason) { const model = this.model; this.model = null; model?.onDismiss(reason); }
   destroy() { this.model = null; this.destroyed = true; }
 }
-const modules = { OrbitRadialView: View };
+const captures = [];
+const modules = { OrbitRadialView: View, Orbit: {
+  captureContext(win, context, kind) { captures.push({ win, context, kind }); },
+} };
 globalThis.ChromeUtils = {
   defineESModuleGetters(target, getters) {
     for (const name of Object.keys(getters)) Object.defineProperty(target, name, { get: () => modules[name] });
@@ -28,7 +31,7 @@ globalThis.JSWindowActorChild = class {};
 globalThis.JSWindowActorParent = class {};
 const load = async name => import(`data:text/javascript;base64,${Buffer.from(await readFile(
   new URL(`../overlay/browser/components/orbit/${name}.sys.mjs`, import.meta.url), "utf8")).toString("base64")}`);
-const { OrbitRadial, buildTabTree, snapshotNativeMenu, executeNativeCommand } = await load("OrbitRadial");
+const { OrbitRadial, buildTabTree, snapshotNativeMenu, executeNativeCommand, canvasCaptureActions } = await load("OrbitRadial");
 modules.OrbitRadial = OrbitRadial;
 const { OrbitRadialParent } = await load("OrbitRadialParent");
 const { OrbitRadialChild } = await load("OrbitRadialChild");
@@ -147,6 +150,84 @@ test("menu snapshot preserves original IDs, flattened native groups and lazy chi
   assert.equal(extension.commands, 0);
 });
 
+test("canvas capture choices accept only web URLs and non-password native selection metadata", () => {
+  const context = {
+    browser: { currentURI: { spec: "https://example.test/page" } },
+    onLink: true, linkURL: "https://research.test/", isTextSelected: true,
+    selectionInfo: { fullText: "A selected thought" }, contentData: { docLocation: "https://frame.test/" },
+  };
+  assert.deepEqual(canvasCaptureActions(context).map(item => item.id),
+    ["orbit-canvas-page", "orbit-canvas-link", "orbit-canvas-selection"]);
+  for (const url of ["javascript:alert(1)", "file:///C:/private.txt", "https://user:password@example.test/"]) {
+    context.linkURL = url;
+    assert.equal(canvasCaptureActions(context).some(item => item.captureKind === "link"), false);
+  }
+  context.onPassword = true;
+  assert.equal(canvasCaptureActions(context).some(item => item.captureKind === "selection"), false);
+  context.onPassword = false;
+  context.passwordRevealed = true;
+  assert.equal(canvasCaptureActions(context).some(item => item.captureKind === "selection"), false);
+  context.passwordRevealed = false;
+  context.selectionInfo.fullText = "  ";
+  assert.equal(canvasCaptureActions(context).some(item => item.captureKind === "selection"), false);
+  context.browser.currentURI.spec = "about:preferences";
+  assert.deepEqual(canvasCaptureActions(context), []);
+});
+
+test("Send to canvas is reachable in the first ring and activates only the current native descriptor", () => {
+  const f = fixture(); down(f); up(f);
+  const native = f.nativeContext(f.browser, {
+    onLink: true, linkURL: "https://research.test/", linkTextStr: "Research",
+    actor: { manager: { isCurrentGlobal: true, rootFrameLoader: { ownerElement: f.browser } }, browsingContext: { ancestorsAreCurrent: true } },
+  });
+  const branch = f.view.model.items[0];
+  assert.equal(branch.id, "orbit-send-to-canvas");
+  assert.deepEqual(branch.children.map(item => item.id), ["orbit-canvas-page", "orbit-canvas-link"]);
+  const previous = captures.length;
+  f.view.model.onHover(branch);
+  assert.equal(captures.length, previous, "hover never captures a card");
+  const action = { ...branch.children[1], captureKind: "selection", url: "javascript:alert(1)" };
+  f.view.model.onActivate(action);
+  assert.equal(captures.length, previous + 1);
+  assert.deepEqual(captures.at(-1), { win: f.win, context: native.context, kind: "link" },
+    "command kind and URL come from verified native metadata, not a menu payload");
+  assert.equal(f.win.gContextMenu, null);
+  assert.equal(f.hidden, 1);
+  assert.equal(f.extensionHidden, 1);
+  OrbitRadial.uninit(f.win);
+});
+
+test("capture rechecks selection protection and rejects stale or foreign native actors", () => {
+  const f = fixture(); down(f); up(f);
+  const native = f.nativeContext(f.browser, {
+    isTextSelected: true, selectionInfo: { fullText: "Selected research" },
+    actor: { manager: { isCurrentGlobal: true, rootFrameLoader: { ownerElement: f.browser } }, browsingContext: { ancestorsAreCurrent: true } },
+  });
+  const item = f.view.model.items[0].children.find(action => action.captureKind === "selection");
+  const previous = captures.length;
+  native.context.onPassword = true;
+  f.view.model.onActivate(item);
+  assert.equal(captures.length, previous);
+  for (const invalidate of [
+    actor => actor.manager.isCurrentGlobal = false,
+    actor => actor.manager.rootFrameLoader.ownerElement = {},
+    actor => actor.browsingContext.ancestorsAreCurrent = false,
+    actor => actor.browsingContext.isInBFCache = true,
+    actor => actor.browsingContext.isDiscarded = true,
+  ]) {
+    down(f); up(f);
+    const current = f.nativeContext(f.browser, {
+      actor: { manager: { isCurrentGlobal: true, rootFrameLoader: { ownerElement: f.browser } }, browsingContext: { ancestorsAreCurrent: true } },
+    });
+    const page = f.view.model.items[0].children[0];
+    invalidate(current.context.actor);
+    f.view.model.onActivate(page);
+    assert.equal(captures.length, previous);
+    assert.equal(f.view.model, null);
+  }
+  OrbitRadial.uninit(f.win);
+});
+
 test("native command revalidates disabled and mimics checkbox/radio autocheck", () => {
   const f = fixture();
   const node = f.copy;
@@ -237,6 +318,33 @@ test("Escape returns focus to the original content browser after native menu cle
   assert.equal(f.win.contentFocused, true);
   assert.equal(f.win.gContextMenu, null);
   OrbitRadial.uninit(f.win);
+});
+
+test("opening another Orbit surface dismisses native context and suppresses a held gesture's late popup", () => {
+  const f = fixture();
+  f.nativeContext();
+  OrbitRadial.dismiss(f.win, "command-palette");
+  assert.equal(f.view.model, null);
+  assert.equal(f.win.gContextMenu, null);
+  assert.equal(f.hidden, 1);
+  assert.equal(f.extensionHidden, 1);
+  assert.equal(f.copy.commands, 0);
+  assert.equal(f.win.gBrowser.selectedTab, f.first);
+  // Repeated dismissal must not emit a second native popuphidden lifecycle.
+  OrbitRadial.dismiss(f.win, "command-palette");
+  assert.equal(f.hidden, 1);
+  down(f);
+  OrbitRadial.dismiss(f.win, "command-palette");
+  up(f);
+  const late = f.nativeContext();
+  assert.equal(late.event.defaultPrevented, true);
+  assert.equal(f.view.model, null);
+  assert.equal(f.win.gContextMenu, null);
+  assert.equal(f.hidden, 2);
+  assert.equal(f.extensionHidden, 2);
+  assert.equal(f.win.gBrowser.selectedTab, f.first);
+  OrbitRadial.uninit(f.win);
+  OrbitRadial.dismiss(f.win, "command-palette");
 });
 
 test("late background-browser context is cancelled and cleaned without a suppression token", () => {

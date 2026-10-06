@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rebuild three existing Orbit CSS resources in a verified native package.
+"""Rebuild four registered Orbit CSS resources in a verified native package.
 
 This is an incremental native resource build. Candidate provenance and source
 equivalence are checked by CI before this helper; all runtime checks still run.
@@ -23,7 +23,7 @@ from package_windows import verify_native_package
 ROOT = Path(__file__).resolve().parents[1]
 CSS_PATHS = tuple(
     f"overlay/browser/base/content/orbit/{name}"
-    for name in ("orbit.css", "orbit-radial.css", "orbit-chrome.css")
+    for name in ("orbit.css", "orbit-radial.css", "orbit-chrome.css", "orbit-interactions.css")
 )
 
 
@@ -44,7 +44,7 @@ def matches_old_css(raw: bytes, expected: str) -> bool:
 
 def validate_baseline(baseline: dict) -> None:
     if not isinstance(baseline, dict) or set(baseline) != set(CSS_PATHS):
-        raise ValueError("Baseline must contain exactly the three allowlisted Orbit CSS paths")
+        raise ValueError("Baseline must contain exactly the four allowlisted Orbit CSS paths")
     for path, digest in baseline.items():
         if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{40}", digest):
             raise ValueError(f"Baseline requires an exact lowercase Git blob SHA for {path}")

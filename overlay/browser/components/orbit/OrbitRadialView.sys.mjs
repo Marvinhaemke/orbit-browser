@@ -58,13 +58,22 @@ export function layoutRadialRings({width, height, center, counts, parentIndices 
     const sectorAngle = span / Math.max(1, sectors);
     const start = fan ? anchor - span / 2 : anchor - sectorAngle / 2;
     const insetAngle = Math.min(.028, sectorAngle / 12);
+    const orbitRadius = (inner + outer) / 2;
+    const neighborDistance = sectors > 1 ? 2 * orbitRadius * Math.sin(sectorAngle / 2) : Infinity;
+    // Separate sculpted buttons share the canvas menu's circular shape. The
+    // Euclidean chord, rather than arc length, prevents adjacent fan buttons
+    // overlapping. Radial insets also keep different generations separate.
+    const targetRadius = Math.max(.125, Math.min(33, (outer - inner) / 2 - 5, neighborDistance / 2 - 4));
     rings.push({depth, count: sectors, inner, outer, fan, anchor, span, start, end: start + span,
-      sectorAngle, insetAngle,
-      sectors: Array.from({length: sectors}, (_, index) => ({index,
-        angle: start + (index + .5) * sectorAngle,
-        start: start + index * sectorAngle + insetAngle,
-        end: start + (index + 1) * sectorAngle - insetAngle,
-      })),
+      sectorAngle, insetAngle, orbitRadius, targetRadius,
+      sectors: Array.from({length: sectors}, (_, index) => {
+        const angle = start + (index + .5) * sectorAngle;
+        return {index, angle, targetRadius,
+          x: x + Math.cos(angle) * orbitRadius, y: y + Math.sin(angle) * orbitRadius,
+          start: start + index * sectorAngle + insetAngle,
+          end: start + (index + 1) * sectorAngle - insetAngle,
+        };
+      }),
     });
   }
   return {center: {x, y}, radius, centerRadius, ringWidth, gap, rings};
@@ -82,22 +91,37 @@ export function radialSectorPath(cx, cy, inner, outer, start, end) {
   return `M ${a} A ${outer} ${outer} 0 ${large} 1 ${b} L ${c} A ${inner} ${inner} 0 ${large} 0 ${d} Z`;
 }
 
-/** Returns {depth,index} or {center:true}. Gaps intentionally return null;
- * crossing a separator therefore keeps the existing submenu path open. */
+/** Returns {depth,index} or {center:true}. Only the painted circular buttons
+ * accept release; the soft disc/fan backing and every gap return null. */
 export function hitRadialGeometry(geometry, x, y) {
   const dx = x - geometry.center.x, dy = y - geometry.center.y;
   const distance = Math.hypot(dx, dy);
   if (distance <= geometry.centerRadius) return {center: true};
   const ring = geometry.rings.find(candidate => distance >= candidate.inner && distance <= candidate.outer);
   if (!ring || !ring.count) return null;
-  const angle = ((Math.atan2(dy, dx) - ring.start) % TAU + TAU) % TAU;
-  if (angle >= ring.span) return null;
-  const index = Math.min(ring.count - 1, Math.floor(angle / ring.sectorAngle));
-  // Hit only the painted sector, including its angular separators. A blank
-  // part of an outer fan must never activate a hidden command on release.
-  const within = angle - index * ring.sectorAngle;
-  if (within < ring.insetAngle || within > ring.sectorAngle - ring.insetAngle) return null;
-  return {depth: ring.depth, index};
+  const sector = ring.sectors.find(candidate => Math.hypot(x - candidate.x, y - candidate.y) <= candidate.targetRadius);
+  return sector ? {depth: ring.depth, index: sector.index} : null;
+}
+
+function visualLabel(node) {
+  // Compact visual wording leaves room for the circular surface. The full
+  // native Fluent label remains in the accessible name and SVG title.
+  const labels = {
+    "context-openlink": "New window",
+    "context-openlinkprivate": "Private window",
+    "context-openlinkinusercontext-menu": "Container tab",
+    "context-openlinkinsplitview": "Split view",
+    "context-savelink": "Save link",
+    "context-copylink": "Copy link",
+    "context-copyimage": "Image link",
+    "context-saveimage": "Save image",
+    "context-viewimage": "View image",
+    "context-viewimageinfo": "Image info",
+    "context-selectall": "Select all",
+    "context-viewsource": "Page source",
+    "context-inspect": "Inspect",
+  };
+  return labels[node.id] || node.label;
 }
 
 function safeImage(icon) {
@@ -159,6 +183,7 @@ export class OrbitRadialView {
     this.doc = win.document;
     this.root = null;
     this.panel = null;
+    this.caption = null;
     this.model = null;
     this.path = [];
     this.rings = [];
@@ -226,7 +251,11 @@ export class OrbitRadialView {
     this.panel.tabIndex = 0;
     this.panel.setAttribute("role", "menu");
     this.panel.setAttribute("aria-label", "Orbit radial menu");
-    this.root.append(this.panel);
+    this.caption = this._html("div", "orbit-radial-command-label");
+    this.caption.id = "orbit-radial-command-label";
+    this.caption.setAttribute("aria-hidden", "true");
+    this.caption.hidden = true;
+    this.root.append(this.panel, this.caption);
     this.doc.documentElement.append(this.root);
     this._listen(this.panel, "pointermove", event => this.updatePointer(event.screenX, event.screenY));
     this._listen(this.panel, "pointerleave", () => {
@@ -336,7 +365,8 @@ export class OrbitRadialView {
     // when keyboard focus remains on the menu container.
     svg.removeAttribute("aria-hidden");
     const defs = this._svg("defs");
-    for (const [name, first, second] of [["base", "--orbit-sector-a", "--orbit-sector-b"],
+    for (const [name, first, second] of [["surface", "--orbit-surface-a", "--orbit-surface-b"],
+      ["base", "--orbit-sector-a", "--orbit-sector-b"],
       ["active", "--orbit-active-a", "--orbit-active-b"]]) {
       const gradient = this._svg("linearGradient", {id: `orbit-gradient-${name}`, x1: "0", y1: "0", x2: "1", y2: "1"});
       const start = this._svg("stop", {offset: "0%"});
@@ -346,6 +376,14 @@ export class OrbitRadialView {
       gradient.append(start, end); defs.append(gradient);
     }
     svg.append(defs);
+    // One soft canvas material supports the root and its outward fans. This
+    // entire backing is decorative: even its visible blank space passes input
+    // through to the real page underneath.
+    const backing = this._svg("g", {class: "orbit-radial-backing", "pointer-events": "none", "aria-hidden": "true"});
+    backing.append(this._svg("circle", {cx: localCenter, cy: localCenter,
+      r: (geometry.rings[0]?.outer || geometry.centerRadius) + 7,
+      class: "orbit-radial-disc", "pointer-events": "none"}));
+    svg.append(backing);
     const signatures = [];
     for (const [depth, nodes] of this.rings.entries()) {
       const ring = geometry.rings[depth];
@@ -360,6 +398,26 @@ export class OrbitRadialView {
         ringGroup.style.setProperty("--orbit-fan-angle", `${ring.anchor * 180 / Math.PI}deg`);
         ringGroup.style.setProperty("--orbit-fan-span", `${ring.span * 180 / Math.PI}deg`);
         ringGroup.style.transformOrigin = `${localCenter + Math.cos(ring.anchor) * ring.inner}px ${localCenter + Math.sin(ring.anchor) * ring.inner}px`;
+        const surface = this._svg("g", {class: `orbit-radial-backing-fan${stable ? " orbit-radial-stable" : ""}`,
+          "pointer-events": "none", "aria-hidden": "true"});
+        surface.style.transformOrigin = ringGroup.style.transformOrigin;
+        const first = ring.sectors[0], last = ring.sectors.at(-1);
+        if (first && last) {
+          if (nodes.length === 1) {
+            surface.append(this._svg("circle", {cx: localCenter + Math.cos(first.angle) * ring.orbitRadius,
+              cy: localCenter + Math.sin(first.angle) * ring.orbitRadius, r: (ring.outer - ring.inner) / 2 + 7,
+              class: "orbit-radial-disc", "pointer-events": "none"}));
+          } else {
+            const sx = localCenter + Math.cos(first.angle) * ring.orbitRadius;
+            const sy = localCenter + Math.sin(first.angle) * ring.orbitRadius;
+            const ex = localCenter + Math.cos(last.angle) * ring.orbitRadius;
+            const ey = localCenter + Math.sin(last.angle) * ring.orbitRadius;
+            surface.append(this._svg("path", {d: `M ${sx} ${sy} A ${ring.orbitRadius} ${ring.orbitRadius} 0 0 1 ${ex} ${ey}`,
+              "stroke-width": ring.outer - ring.inner + 14, "stroke-linecap": "round",
+              class: "orbit-radial-fan-surface", "pointer-events": "none"}));
+          }
+        }
+        backing.append(surface);
       }
       nodes.forEach((node, index) => {
         const sector = ring.sectors[index];
@@ -375,21 +433,24 @@ export class OrbitRadialView {
         if (node.disabled) g.classList.add("orbit-radial-disabled");
         if (node.checked) g.classList.add("orbit-radial-checked");
         if (this.path[depth]?.id === node.id) g.classList.add("orbit-radial-parent");
-        const path = this._svg("path", {d: radialSectorPath(localCenter, localCenter, ring.inner, ring.outer,
-          sector.start, sector.end), class: "orbit-radial-sector-shape"});
-        g.append(path);
-        const r = (ring.inner + ring.outer) / 2;
+        const r = ring.orbitRadius;
         const x = localCenter + Math.cos(angle) * r;
         const y = localCenter + Math.sin(angle) * r;
-        g.setAttribute("data-orbit-x", geometry.center.x + Math.cos(angle) * r);
-        g.setAttribute("data-orbit-y", geometry.center.y + Math.sin(angle) * r);
+        const border = Math.min(1, sector.targetRadius);
+        const shape = this._svg("circle", {cx: x, cy: y, r: sector.targetRadius - border / 2,
+          class: "orbit-radial-sector-shape orbit-radial-option-surface"});
+        shape.style.setProperty("stroke-width", border);
+        g.append(shape);
+        g.setAttribute("data-orbit-x", sector.x);
+        g.setAttribute("data-orbit-y", sector.y);
+        g.setAttribute("data-orbit-radius", sector.targetRadius);
         g.setAttribute("data-orbit-inner", ring.inner);
         g.setAttribute("data-orbit-outer", ring.outer);
-        const compact = ring.outer - ring.inner < 32;
+        const compact = sector.targetRadius < 20;
         const imageURL = safeImage(node.favicon || node.icon);
         if (imageURL && !compact) {
           g.append(this._svg("image", {href: imageURL, x: x - 9, y: y - 23, width: 18, height: 18, class: "orbit-radial-icon-image"}));
-        } else if (ring.outer - ring.inner > 9) {
+        } else if (sector.targetRadius > 6) {
           const vector = this._icon(node, x, compact ? y : y - 15);
           if (vector) g.append(vector);
           else {
@@ -398,15 +459,15 @@ export class OrbitRadialView {
           }
         }
         if (!compact) {
-          const limit = clamp(Math.floor(r * ring.sectorAngle / 6.5), 5, 14);
-          shortLines(node.label, limit).forEach((line, lineIndex) => {
+          const limit = clamp(Math.floor((sector.targetRadius * 2 - 12) / 5.7), 4, 10);
+          shortLines(visualLabel(node), limit).forEach((line, lineIndex) => {
             const label = this._svg("text", {x, y: y + 9 + lineIndex * 12, class: "orbit-radial-label", "text-anchor": "middle"});
             label.textContent = line; g.append(label);
           });
         }
         if (node.children?.length) {
-          const arrow = this._svg("text", {x: localCenter + Math.cos(angle) * (ring.outer - 8),
-            y: localCenter + Math.sin(angle) * (ring.outer - 8) + 3,
+          const arrow = this._svg("text", {x: x + Math.cos(angle) * (sector.targetRadius - 5),
+            y: y + Math.sin(angle) * (sector.targetRadius - 5) + 3,
             class: "orbit-radial-submenu-mark", "text-anchor": "middle"});
           arrow.textContent = "·"; g.append(arrow);
           g.setAttribute("aria-haspopup", "menu");
@@ -415,18 +476,6 @@ export class OrbitRadialView {
         const title = this._svg("title"); title.textContent = String(node.label || node.id); g.append(title);
         ringGroup.append(g);
       });
-      const guideRadius = ring.inner - geometry.gap / 2;
-      if (ring.fan) {
-        const startX = localCenter + Math.cos(ring.start) * guideRadius;
-        const startY = localCenter + Math.sin(ring.start) * guideRadius;
-        const endX = localCenter + Math.cos(ring.end) * guideRadius;
-        const endY = localCenter + Math.sin(ring.end) * guideRadius;
-        ringGroup.append(this._svg("path", {d: `M ${startX} ${startY} A ${guideRadius} ${guideRadius} 0 0 1 ${endX} ${endY}`,
-          class: "orbit-radial-orbit", "pointer-events": "none"}));
-      } else {
-        ringGroup.append(this._svg("circle", {cx: localCenter, cy: localCenter, r: guideRadius,
-          class: "orbit-radial-orbit", "pointer-events": "none"}));
-      }
       svg.append(ringGroup);
     }
     this.ringSignatures = signatures;
@@ -446,7 +495,45 @@ export class OrbitRadialView {
     const caption = this._html("div", "orbit-radial-caption", this.path.length > 3 ? `DEPTH ${this.path.length + 1}` : this.model.mode === "tabs" ? "YOUR OPEN TABS" : "PAGE ACTIONS");
     caption.setAttribute("aria-hidden", "true");
     this.panel.replaceChildren(svg, center, caption);
+    this._positionCaption();
     this._paintActive();
+  }
+
+  _positionCaption() {
+    if (!this.caption || !this.geometry) return;
+    const {width, height} = {width: this.win.innerWidth, height: this.win.innerHeight};
+    const {center, radius, centerRadius, rings} = this.geometry;
+    const labelWidth = Math.min(360, Math.max(1, width - 32));
+    const reserveHeight = Math.min(112, Math.max(1, height - 32));
+    const rootRadius = rings[0]?.outer || centerRadius;
+    const circles = [{x: center.x, y: center.y, targetRadius: centerRadius}, ...rings.flatMap(ring => ring.sectors)];
+    const locations = [
+      [center.x - labelWidth / 2, center.y + rootRadius + 20],
+      [center.x - labelWidth / 2, center.y - rootRadius - 20 - reserveHeight],
+      [center.x - labelWidth / 2, center.y + radius + 20],
+      [center.x - labelWidth / 2, center.y - radius - 20 - reserveHeight],
+      [16, 16], [width - labelWidth - 16, 16],
+      [16, height - reserveHeight - 16], [width - labelWidth - 16, height - reserveHeight - 16],
+    ];
+    // A fixed caption box lets long native command names and tab titles stay
+    // legible without remounting or moving command circles on every hover.
+    // Prefer the root's edge, then a clear viewport corner for deeper fans.
+    let best = null;
+    for (const [left, top] of locations) {
+      const x = clamp(left, 16, Math.max(16, width - labelWidth - 16));
+      const y = clamp(top, 16, Math.max(16, height - reserveHeight - 16));
+      const overlaps = circles.filter(circle => {
+        const dx = Math.max(x - circle.x, 0, circle.x - (x + labelWidth));
+        const dy = Math.max(y - circle.y, 0, circle.y - (y + reserveHeight));
+        return Math.hypot(dx, dy) < circle.targetRadius + 8;
+      }).length;
+      if (!best || overlaps < best.overlaps) best = {x, y, overlaps};
+      if (!overlaps) break;
+    }
+    this.caption.style.left = `${best.x}px`;
+    this.caption.style.top = `${best.y}px`;
+    this.caption.style.width = `${labelWidth}px`;
+    this.caption.style.maxHeight = `${Math.max(1, height - best.y - 16)}px`;
   }
 
   hitTest(screenX, screenY) {
@@ -492,6 +579,10 @@ export class OrbitRadialView {
         Number(sector.dataset.orbitDepth) === this.active?.depth);
     }
     this.panel.querySelector(".orbit-radial-center")?.classList.toggle("orbit-radial-active", this.active?.depth === -1);
+    if (this.caption) {
+      this.caption.textContent = this.active?.node?.label || "";
+      this.caption.hidden = !this.active?.node?.label;
+    }
     this.panel.setAttribute("aria-label", this.active?.node?.label ? `Orbit menu: ${this.active.node.label}` : "Orbit radial menu");
     if (this.active?.node) {
       this.panel.setAttribute("aria-activedescendant", this.active.depth === -1 ? "orbit-radial-center" :
@@ -519,6 +610,7 @@ export class OrbitRadialView {
 
   _keyboard(event) {
     if (!this.model || !this.root || this.root.classList.contains("orbit-radial-leaving")) return;
+    if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
     if (event.key === "Escape") {
       event.preventDefault(); event.stopPropagation();
       if (this.path.length) {
@@ -576,7 +668,7 @@ export class OrbitRadialView {
   _remove() {
     for (const cleanup of this.cleanups.splice(0)) cleanup();
     this.root?.remove();
-    this.root = null; this.panel = null; this.model = null; this.geometry = null;
+    this.root = null; this.panel = null; this.caption = null; this.model = null; this.geometry = null;
     this.path = []; this.rings = []; this.active = null;
     this.ringSignatures = [];
   }

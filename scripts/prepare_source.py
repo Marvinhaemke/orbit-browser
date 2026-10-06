@@ -78,7 +78,9 @@ def transform(path: str, original: str, root: Path = ROOT) -> str:
             "        content/browser/orbit/orbit.js   (content/orbit/orbit.js)\n"
             "        content/browser/orbit/orbit.svg  (content/orbit/orbit.svg)\n"
             "        content/browser/orbit/orbit-radial.css (content/orbit/orbit-radial.css)\n"
-            "        content/browser/orbit/orbit-chrome.css (content/orbit/orbit-chrome.css)\n",
+            "        content/browser/orbit/orbit-chrome.css (content/orbit/orbit-chrome.css)\n"
+            "        content/browser/orbit/orbit-interactions.css (content/orbit/orbit-interactions.css)\n"
+            "        content/browser/orbit/orbit-commands.svg (content/orbit/orbit-commands.svg)\n",
             1,
         )
     if path == "browser/branding/unofficial/configure.sh":
@@ -117,6 +119,7 @@ def apply_overlay(source: Path, root: Path = ROOT) -> None:
     overlay = root / "overlay"
     required = [
         "browser/components/orbit/Orbit.sys.mjs",
+        "browser/components/orbit/OrbitInteractions.sys.mjs",
         "browser/components/orbit/OrbitRadial.sys.mjs",
         "browser/components/orbit/OrbitRadialView.sys.mjs",
         "browser/components/orbit/OrbitRadialChild.sys.mjs",
@@ -129,6 +132,8 @@ def apply_overlay(source: Path, root: Path = ROOT) -> None:
         "browser/base/content/orbit/orbit.svg",
         "browser/base/content/orbit/orbit-radial.css",
         "browser/base/content/orbit/orbit-chrome.css",
+        "browser/base/content/orbit/orbit-interactions.css",
+        "browser/base/content/orbit/orbit-commands.svg",
         "browser/branding/unofficial/content/about-logo.svg",
         "browser/branding/unofficial/content/about-wordmark.svg",
         "browser/branding/unofficial/content/firefox-wordmark.svg",

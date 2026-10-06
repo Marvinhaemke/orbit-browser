@@ -129,6 +129,52 @@ test("separator gaps preserve submenu hysteresis by yielding no target", () => {
   assert.equal(hitRadialGeometry(geometry, -100, -100), null);
 });
 
+test("canvas-style option circles preserve useful desktop targets without overlapping", () => {
+  for (const [width, height] of [[1280, 800], [1440, 960]]) {
+    for (let depth = 1; depth <= 4; depth++) {
+      const geometry = layoutRadialRings({width, height, center: {x: width / 2, y: height / 2},
+        counts: Array(depth).fill(8), parentIndices: Array(depth - 1).fill(7)});
+      const sectors = geometry.rings.flatMap(ring => ring.sectors);
+      for (const sector of sectors) {
+        assert.ok(sector.targetRadius * 2 >= 44, `${depth} rings at ${width}x${height}`);
+        assert.ok(sector.targetRadius * 2 <= 66);
+        assert.ok(Math.hypot(sector.x - geometry.center.x, sector.y - geometry.center.y) >
+          geometry.centerRadius + sector.targetRadius);
+        for (const other of sectors) {
+          if (sector === other) continue;
+          assert.ok(Math.hypot(sector.x - other.x, sector.y - other.y) >
+            sector.targetRadius + other.targetRadius, "distinct commands must have a gap");
+        }
+      }
+    }
+  }
+});
+
+test("the visible soft disc and a circular option's bounding-box corner are decorative", () => {
+  const geometry = layoutRadialRings({width: 1280, height: 800, center: {x: 640, y: 400},
+    counts: [8, 8], parentIndices: [0]});
+  const sector = geometry.rings[0].sectors[0];
+  const corner = sector.targetRadius * .9;
+  assert.equal(hitRadialGeometry(geometry, sector.x + corner, sector.y - corner), null);
+  const ring = geometry.rings[0];
+  // The root's complete moonstone/ink backing contains this point, but its
+  // circular commands deliberately leave the old wedge's area inactive.
+  assert.equal(hitRadialGeometry(geometry, geometry.center.x,
+    geometry.center.y - (ring.inner + 2)), null);
+});
+
+test("a target's painted circular edge accepts release but the next pixel does not", () => {
+  const geometry = layoutRadialRings({width: 1280, height: 800, center: {x: 640, y: 400}, counts: [8]});
+  for (const sector of geometry.rings[0].sectors) {
+    const dx = Math.cos(sector.angle), dy = Math.sin(sector.angle);
+    assert.deepEqual(hitRadialGeometry(geometry,
+      sector.x + dx * (sector.targetRadius - .01), sector.y + dy * (sector.targetRadius - .01)),
+    {depth: 0, index: sector.index});
+    assert.equal(hitRadialGeometry(geometry,
+      sector.x + dx * (sector.targetRadius + 1), sector.y + dy * (sector.targetRadius + 1)), null);
+  }
+});
+
 test("edge placement and arbitrary depth remain inside the viewport", () => {
   for (const [width, height] of [[1440,960],[800,600],[320,240],[160,120]]) {
     for (const depth of [1,3,4,8,20,60]) {

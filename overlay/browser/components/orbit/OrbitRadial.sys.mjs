@@ -4,6 +4,7 @@
 
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
+  Orbit: "moz-src:///browser/components/orbit/Orbit.sys.mjs",
   OrbitRadialView: "moz-src:///browser/components/orbit/OrbitRadialView.sys.mjs",
 });
 const windows = new WeakMap();
@@ -13,6 +14,34 @@ const TAB_EVENTS = [
   "TabMove", "TabGrouped", "TabUngrouped", "TabGroupCreate", "TabGroupRemoved",
   "TabGroupUpdate", "TabGroupCollapse", "TabGroupExpand", "TabShow", "TabHide",
 ];
+
+function captureURL(value) {
+  try {
+    const url = new URL(value);
+    return (url.protocol === "https:" || url.protocol === "http:") &&
+      !!url.hostname && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
+
+/** Availability comes only from Firefox's initialized context descriptor.
+ * Commands revalidate that descriptor again when activated. */
+export function canvasCaptureActions(context) {
+  const items = [];
+  if (captureURL(context?.browser?.currentURI?.spec)) items.push({
+    id: "orbit-canvas-page", label: "Add page card", kind: "canvas-capture", captureKind: "page",
+  });
+  if (context?.onLink && captureURL(context.linkURL)) items.push({
+    id: "orbit-canvas-link", label: "Add link card", kind: "canvas-capture", captureKind: "link",
+  });
+  if (context?.isTextSelected && !context.onPassword && !context.passwordRevealed &&
+      typeof context.selectionInfo?.fullText === "string" && context.selectionInfo.fullText.trim() &&
+      captureURL(context.contentData?.docLocation || context.browser?.currentURI?.spec)) items.push({
+    id: "orbit-canvas-selection", label: "Save text as note", kind: "canvas-capture", captureKind: "selection",
+  });
+  return items;
+}
 
 export function nativeMenuVisible(node) {
   return !node.hidden && !node.collapsed && node.getAttribute("hidden") !== "true" &&
@@ -184,7 +213,11 @@ class RadialWindow {
     });
     const centerId = this.context?.onLink ? "context-openlinkintab" :
       this.context?.onImage ? "context-viewimage" : null;
-    return items.filter(item => item.id !== centerId);
+    const native = items.filter(item => item.id !== centerId);
+    const capture = canvasCaptureActions(this.context);
+    return capture.length ? [{
+      id: "orbit-send-to-canvas", label: "Send to canvas", kind: "submenu", children: capture,
+    }, ...native] : native;
   }
 
   _centerItem() {
@@ -360,7 +393,9 @@ class RadialWindow {
     if (!this.context || this.context !== this.win.gContextMenu ||
         this.contextBrowser !== this.win.gBrowser.selectedBrowser) return;
     const actor = this.context.actor;
-    if (actor && (!actor.manager.isCurrentGlobal || !actor.browsingContext.ancestorsAreCurrent)) {
+    if (actor && (!actor.manager?.isCurrentGlobal || !actor.browsingContext?.ancestorsAreCurrent ||
+        actor.browsingContext.isInBFCache || actor.browsingContext.isDiscarded ||
+        actor.manager.rootFrameLoader?.ownerElement !== this.contextBrowser)) {
       this.dismiss("stale-context");
       return;
     }
@@ -374,7 +409,10 @@ class RadialWindow {
       // rings. Native edit commands use commandDispatcher's focused window,
       // so restore the source browser BEFORE dispatching the original item.
       this.contextBrowser.focus();
-      if (node) executeNativeCommand(this.win, node, event);
+      const capture = item.kind === "canvas-capture" &&
+        canvasCaptureActions(this.context).find(action => action.id === item.id);
+      if (capture) lazy.Orbit.captureContext(this.win, this.context, capture.captureKind);
+      else if (node) executeNativeCommand(this.win, node, event);
       else if (item.id === "orbit-radial-new-tab" && !this.context.onLink && !this.context.onImage) {
         const tab = this.win.gBrowser.getTabForBrowser(this.contextBrowser);
         if (tab) this.win.gBrowser.selectedTab = this.win.gBrowser.duplicateTab(tab);
@@ -467,6 +505,10 @@ export const OrbitRadial = {
   uninit(win) {
     windows.get(win)?.destroy();
     windows.delete(win);
+  },
+
+  dismiss(win, reason = "dismiss") {
+    windows.get(win)?.dismiss(reason);
   },
 
   handleContentGesture(win, browser, frameId, data) {

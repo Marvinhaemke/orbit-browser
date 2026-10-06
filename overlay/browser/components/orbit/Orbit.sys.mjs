@@ -15,6 +15,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
     "moz-src:///toolkit/components/contextualidentity/ContextualIdentityService.sys.mjs",
   CustomizableUI:
     "moz-src:///browser/components/customizableui/CustomizableUI.sys.mjs",
+  OrbitInteractions: "moz-src:///browser/components/orbit/OrbitInteractions.sys.mjs",
   OrbitRadial: "moz-src:///browser/components/orbit/OrbitRadial.sys.mjs",
   OrbitTheme: "moz-src:///browser/components/orbit/OrbitTheme.sys.mjs",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
@@ -219,6 +220,8 @@ class OrbitWindow {
     this.peekPanel = null;
     this.peekBrowser = null;
     this.peekProgress = null;
+    this.captureToast = null;
+    this.captureToastTimer = null;
     this.oldBrowserPosition = null;
 
     // The browser-window bridge keeps the toolbar canvas contract. Native new
@@ -358,6 +361,109 @@ class OrbitWindow {
     this.board = board;
     this.notify({ type: "board-changed", board }, source);
     return clone(board);
+  }
+
+  getFrames() {
+    const board = this.getBoard();
+    return (board?.frames || []).map(frame => ({
+      id: frame.id,
+      title: frame.title,
+      tabCount: board.items.filter(item => item.type === "tab" && item.frameId === frame.id).length,
+    }));
+  }
+
+  captureContext(context, kind) {
+    const browser = context?.browser;
+    const tab = browser && this.win.gBrowser.getTabForBrowser(browser);
+    const actor = context?.actor;
+    // A selected subframe can provide the context, but its live WindowGlobal
+    // must still belong to this selected browser when the command executes.
+    // These are the same actor lifecycle/owner checks as OrbitRadialParent.
+    if (this.disposed || context !== this.win.gContextMenu ||
+        browser !== this.win.gBrowser.selectedBrowser ||
+        browser?.ownerDocument?.defaultView !== this.win ||
+        !tab || tab.closing || !this.win.gBrowser.tabs.includes(tab) ||
+        !actor?.manager?.isCurrentGlobal || !actor.browsingContext?.ancestorsAreCurrent ||
+        actor.browsingContext.isInBFCache || actor.browsingContext.isDiscarded ||
+        actor.manager.rootFrameLoader?.ownerElement !== browser) {
+      throw new Error("Orbit requires a current native webpage context");
+    }
+    const board = this.getBoard() || {
+      version: 1, camera: { x: 68, y: 78, zoom: 1 },
+      frames: [], items: [], connections: [], strokes: [],
+    };
+    const userContextId = containerID(Number(tab.userContextId || 0));
+    let item, existing = false;
+    if (kind === "selection") {
+      const selected = context.selectionInfo?.fullText;
+      if (!context.isTextSelected || context.onPassword || context.passwordRevealed ||
+          typeof selected !== "string" || !selected.trim()) {
+        throw new TypeError("Orbit requires selected text outside a password field");
+      }
+      const source = webURL(context.contentData?.docLocation || browser.currentURI.spec);
+      const annotation = `\n\nSource: ${source}`;
+      const note = selected.slice(0, 20000 - annotation.length) + annotation;
+      item = board.items.find(candidate => candidate.type === "note" && candidate.text === note);
+      existing = !!item;
+      if (!item) item = { type: "note", text: note, color: "#70ded3", w: 256, h: 208 };
+    } else if (kind === "page" || kind === "link") {
+      if (kind === "link" && !context.onLink) throw new TypeError("Orbit requires a native link context");
+      const url = webURL(kind === "link" ? context.linkURL : browser.currentURI.spec);
+      const live = kind === "page" ? tab : this.win.gBrowser.tabs.find(candidate =>
+        !candidate.closing && candidate.linkedBrowser?.currentURI?.spec === url &&
+        Number(candidate.userContextId || 0) === userContextId
+      );
+      item = board.items.find(candidate => candidate.type === "tab" &&
+        candidate.url === url && candidate.userContextId === userContextId);
+      existing = !!item;
+      if (!item) item = {
+        type: "tab", url, userContextId, w: 248, h: 160,
+        title: String(kind === "page" ? tab.label || url : context.linkTextStr || url).slice(0, 2048),
+      };
+      if (live) item.tabId = this.tabID(live);
+    } else {
+      throw new TypeError("Unknown Orbit canvas capture action");
+    }
+    if (!existing) {
+      if (board.items.length >= 500) throw new Error("This workspace has reached its 500 card limit");
+      const index = board.items.filter(candidate => !candidate.frameId).length;
+      Object.assign(item, {
+        id: `orbit-${Services.uuid.generateUUID().toString().replace(/[{}]/g, "")}`,
+        x: Math.min(100000, index % 3 * 276),
+        y: Math.min(100000, Math.floor(index / 3) * 228),
+      });
+      board.items.push(item);
+    }
+    this.saveBoard(board);
+    this.showCaptureToast(existing ? "Already on your canvas" :
+      kind === "selection" ? "Text saved to your canvas" : "Card added to your canvas");
+    return { id: item.id, type: item.type, existing };
+  }
+
+  showCaptureToast(message) {
+    const doc = this.win.document;
+    if (!this.captureToast) {
+      const toast = doc.createElementNS(HTML_NS, "div");
+      toast.id = "orbit-capture-toast";
+      toast.setAttribute("role", "status");
+      toast.setAttribute("aria-live", "polite");
+      toast.style.cssText = "position:fixed;z-index:2147483646;bottom:28px;left:50%;transform:translateX(-50%);padding:14px 22px;border-radius:24px;border:1px solid var(--orbit-chrome-highlight,#ffffffb0);background:var(--orbit-chrome-raised,#f5f8fc);color:var(--orbit-chrome-ink,#253247);box-shadow:9px 9px 24px var(--orbit-chrome-shadow,#99acc14a),-5px -5px 18px var(--orbit-chrome-highlight,#ffffffc9),inset 0 1px 0 #fff4;font:600 13px system-ui;pointer-events:none;max-width:80vw;";
+      doc.getElementById("browser").append(toast);
+      this.captureToast = toast;
+    }
+    this.captureToast.textContent = `◉  ${message}`;
+    if (!this.win.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      this.captureToast.animate?.([
+        { opacity: 0, transform: "translate(-50%,10px) scale(.96)" },
+        { opacity: 1, transform: "translate(-50%,0) scale(1)" },
+      ], { duration: 260, easing: "cubic-bezier(.22,1,.36,1)" });
+    }
+    this.win.clearTimeout(this.captureToastTimer);
+    this.captureToastTimer = this.win.setTimeout(() => {
+      this.captureToast?.remove();
+      this.captureToast = null;
+      this.captureToastTimer = null;
+    }, 2400);
   }
 
   tabID(tab) {
@@ -758,6 +864,9 @@ class OrbitWindow {
       cleanup();
     }
     this.closePeek();
+    this.win.clearTimeout(this.captureToastTimer);
+    this.captureToast?.remove();
+    this.captureToast = null;
     this.listeners.clear();
     this.claimedTabIDs.clear();
     this.overlay?.remove();
@@ -792,6 +901,7 @@ export const Orbit = {
     this._windows.set(win, new OrbitWindow(win));
     lazy.OrbitTheme.init(win);
     lazy.OrbitRadial.init(win);
+    lazy.OrbitInteractions.init(win);
     if (!this._widgetCreated) {
       lazy.CustomizableUI.createWidget({
         id: "orbit-canvas-button",
@@ -822,6 +932,21 @@ export const Orbit = {
     this._windows.get(win)?.show();
   },
 
+  getFrames(win) {
+    this.init(win);
+    return this._windows.get(win)?.getFrames() || [];
+  },
+
+  openFrame(win, id) {
+    this.init(win);
+    return this._windows.get(win)?.openFrame(id);
+  },
+
+  captureContext(win, context, kind) {
+    this.init(win);
+    return this._windows.get(win)?.captureContext(context, kind);
+  },
+
   connectCanvas(canvasWindow) {
     const document = canvasWindow?.document;
     if (document?.documentURI !== BOARD_URI || !document.nodePrincipal?.isSystemPrincipal) {
@@ -847,6 +972,7 @@ export const Orbit = {
   },
 
   uninit(win) {
+    lazy.OrbitInteractions.uninit(win);
     lazy.OrbitRadial.uninit(win);
     lazy.OrbitTheme.uninit(win);
     this._windows.get(win)?.destroy();

@@ -25,6 +25,14 @@ Every new tab opens the **Orbit canvas**. Ctrl+T and the native plus button reta
 
 The page wheel uses Firefox’s actual context commands for links, images, selected text, editing, media, and extension actions. Its animations follow the operating system’s reduced-motion preference, and its colors adapt to light, dark, and high-contrast settings.
 
+## Connected browsing
+
+**Orbit commands** opens from its toolbar button or **Ctrl + Shift + Space** (**Command + Shift + Space** on macOS). Search open tabs and saved frames, then use the arrow keys and Enter to jump to a result. The same command bar opens the canvas and toggles focus mode. Escape dismisses it and returns focus to your previous control.
+
+**Send to canvas** in a webpage's radial menu collects the page, a clicked link, or selected text. Cards keep the website's address and container; text becomes an editable note with its source address. Collecting a link does not create another browser tab. Captures join the current window's workspace, and private captures stay in memory.
+
+**Focus mode** (**Alt + Shift + F**) lets the browsing controls recede while you read. The visible **Show controls** button, hovering the top toolbar, keyboard focus, and **Ctrl + L** bring them back. **Escape** restores the full interface. This uses ordinary browser chrome and leaves Firefox's fullscreen mode available separately.
+
 ## Test interface changes without downloading the whole browser
 
 For an existing Orbit installation, download [Orbit-Update-Setup.zip](https://github.com/Marvinhaemke/orbit-browser/releases/download/windows-prototype/Orbit-Update-Setup.zip) once and extract its two files beside `orbit.exe` and `Launch-Orbit.cmd`. New full browser packages already include these files.
@@ -46,6 +54,9 @@ The source implements:
 - Editable sticky notes, connections, freehand drawing, and undo.
 - Radial webpage actions and a held right-button tab switcher, with nested groups and overflow.
 - A radial context menu on the canvas.
+- A searchable native command bar for open tabs, saved frames, and browser actions.
+- Page, link, and selected-text capture into the canvas from the webpage radial menu.
+- Reversible focus mode with controls revealed by pointer or keyboard.
 - Website peeking and comparison through native Gecko browsers and Firefox split views.
 - Session-backed workspace layouts, with private-window data kept in memory.
 - Keyboard controls and reduced-motion support.

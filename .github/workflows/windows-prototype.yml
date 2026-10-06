@@ -59,13 +59,15 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node tests/native-bridge.test.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          foreach ($module in 'OrbitRadial', 'OrbitRadialChild', 'OrbitRadialParent', 'OrbitRadialView') {
+          foreach ($module in 'OrbitInteractions', 'OrbitTheme', 'OrbitRadial', 'OrbitRadialChild', 'OrbitRadialParent', 'OrbitRadialView') {
             node --check "overlay/browser/components/orbit/$module.sys.mjs"
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
           node tests/radial-view.test.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node tests/radial-native.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node tests/interactions.test.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Find tested installation and matching internal native candidate
@@ -111,7 +113,8 @@ jobs:
             const cssPaths = [
               'overlay/browser/base/content/orbit/orbit.css',
               'overlay/browser/base/content/orbit/orbit-radial.css',
-              'overlay/browser/base/content/orbit/orbit-chrome.css'
+              'overlay/browser/base/content/orbit/orbit-chrome.css',
+              'overlay/browser/base/content/orbit/orbit-interactions.css'
             ];
             const cssOnly = file => file.status === 'modified' && cssPaths.includes(file.filename) && !file.previous_filename;
             const candidates = artifacts.filter(a => a.name === 'Orbit-Windows-native-candidate' && eligible(a));
@@ -370,6 +373,10 @@ jobs:
         shell: pwsh
         run: python scripts/smoke_radial.py --binary artifacts/Orbit/orbit.exe --report test-results/radial/smoke.json
 
+      - name: Verify native command bar, capture, and focus interactions
+        shell: pwsh
+        run: python scripts/smoke_ux.py --binary artifacts/Orbit/orbit.exe --report test-results/ux/smoke.json
+
       - name: Package the lightweight interface update
         shell: pwsh
         run: python scripts/package_update.py --package artifacts/Orbit --output artifacts/update --commit $env:GITHUB_SHA
@@ -419,6 +426,10 @@ jobs:
       - name: Verify radial gestures after updating an existing installation
         shell: pwsh
         run: python scripts/smoke_radial.py --binary artifacts/Orbit-Update-Check/orbit.exe --report test-results/updated/radial/smoke.json
+
+      - name: Verify new interactions after updating an existing installation
+        shell: pwsh
+        run: python scripts/smoke_ux.py --binary artifacts/Orbit-Update-Check/orbit.exe --report test-results/updated/ux/smoke.json
 
       - name: Upload tested lightweight update and setup
         uses: actions/upload-artifact@v4
@@ -491,9 +502,15 @@ jobs:
 
           Quick right-click on a webpage opens Orbit's radial page actions. Open in new tab is in the center. Hover a submenu to reveal a fan beside its parent item. Hold the right button to explore open tabs, hover a tab, then release to switch; tab groups and More open further rings.
 
-          Every new tab opens the shared spatial canvas. Orbit now has its own moonstone/mineral-ink appearance, lagoon accents, orbital artwork, and sculpted controls with fluid motion.
+          The webpage and held-tab wheels now share the canvas menu's sculpted circular controls and soft moonstone/mineral-ink material. Submenus still fan out beside their parent.
 
-          For an existing installation, download the current Orbit-Update-Setup.zip and extract its two files beside orbit.exe, replacing earlier updater copies for this release. Future interface changes can use Update-Orbit.cmd directly; your existing profile and Gecko engine are kept.
+          Ctrl+Shift+Space opens Orbit commands: search tabs and frames, open the canvas, or toggle focus mode. Alt+Shift+F toggles focus mode directly; hover the top controls or use Ctrl+L to reveal the address bar, and Escape returns to the full interface.
+
+          Send to canvas in the page wheel collects a page, link, or selected text into the current window's workspace. Private captures stay in the private window.
+
+          Every new tab opens the shared spatial canvas with Orbit's lagoon accents, orbital artwork, and fluid controls.
+
+          Existing installations with the current updater can run Update-Orbit.cmd directly; your profile and Gecko engine are kept. If you still have an older updater, download Orbit-Update-Setup.zip and replace its two files beside orbit.exe once.
 
           Full browser downloads and native test results are available from the Windows prototype workflow. A new Gecko engine requires a complete browser download.
           EOF

@@ -2,21 +2,26 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-/* Only painted sectors and the center receive input. Local submenu fans do
-   not create an invisible disc; held gestures pass through to the page. */
+/* The canvas menu's soft disc, sculpted circular buttons and recessed accent
+   center also belong to native page and tab menus. Every backing is purely
+   decorative; only command circles receive input. */
 .orbit-radial-root {
-  --orbit-sector-a: #2b3850f7;
-  --orbit-sector-b: #182236f7;
-  --orbit-active-a: #426866;
-  --orbit-active-b: #54548d;
-  --orbit-label: #edf3fc;
-  --orbit-icon: #a8e5dd;
-  --orbit-line: #aacbe821;
-  --orbit-edge: #c4def128;
-  --orbit-shadow: #060d196e;
-  --orbit-shine: #accbe11c;
-  --orbit-center-a: #35445e;
-  --orbit-center-b: #192338;
+  --orbit-surface-a: #263249;
+  --orbit-surface-b: #202a3e;
+  --orbit-sector-a: #2b374e;
+  --orbit-sector-b: #232d42;
+  --orbit-active-a: #304a54;
+  --orbit-active-b: #363e61;
+  --orbit-label: #e9f0f8;
+  --orbit-icon: #91e8df;
+  --orbit-line: #b8cbea24;
+  --orbit-edge: #b8d6ff12;
+  --orbit-shadow: #080e1c8a;
+  --orbit-deep-shadow: #050b1780;
+  --orbit-shine: #b8d6ff12;
+  --orbit-center-a: #29404c;
+  --orbit-center-b: #303650;
+  --orbit-caption: #a8b7cb;
   position: fixed;
   inset: 0;
   z-index: 2147483646;
@@ -34,7 +39,7 @@
   opacity: 0;
   transform: scale(.94);
   transform-origin: center;
-  transition: opacity 180ms ease, transform 220ms cubic-bezier(.2,.85,.2,1.08);
+  transition: opacity 180ms ease, transform 300ms cubic-bezier(.18,.9,.25,1.15);
   will-change: transform, opacity;
 }
 .orbit-radial-visible .orbit-radial-menu { opacity: 1; transform: scale(1); }
@@ -49,10 +54,28 @@
   user-select: none;
   pointer-events: none;
 }
+.orbit-radial-backing, .orbit-radial-backing * { pointer-events: none; }
+.orbit-radial-disc {
+  fill: url(#orbit-gradient-surface);
+  stroke: var(--orbit-shine);
+  stroke-width: 1;
+  filter: drop-shadow(10px 12px 22px var(--orbit-deep-shadow))
+    drop-shadow(-4px -4px 8px var(--orbit-shine));
+}
+.orbit-radial-fan-surface {
+  fill: none;
+  stroke: url(#orbit-gradient-surface);
+  filter: drop-shadow(8px 10px 18px var(--orbit-deep-shadow))
+    drop-shadow(-3px -3px 6px var(--orbit-shine));
+}
+.orbit-radial-backing-fan {
+  transform-box: view-box;
+  animation: orbit-radial-fan-in 260ms cubic-bezier(.18,.9,.25,1.15) both;
+}
 .orbit-radial-ring {
   transform-origin: center;
   transform-box: view-box;
-  animation: orbit-radial-ring-in 220ms cubic-bezier(.2,.85,.2,1.08) both;
+  animation: orbit-radial-ring-in 260ms cubic-bezier(.18,.9,.25,1.15) both;
 }
 .orbit-radial-fan { animation-name: orbit-radial-fan-in; }
 .orbit-radial-stable, .orbit-radial-stable .orbit-radial-sector { animation: none !important; }
@@ -68,21 +91,22 @@
   fill: url(#orbit-gradient-base);
   stroke: var(--orbit-edge);
   stroke-width: 1;
-  filter: drop-shadow(3px 4px 5px var(--orbit-shadow))
-    drop-shadow(-1px -1px 1px var(--orbit-shine));
+  filter: drop-shadow(3px 4px 7px var(--orbit-shadow))
+    drop-shadow(-2px -2px 4px var(--orbit-shine));
   transition: fill 130ms ease, stroke 150ms ease, filter 180ms ease;
 }
 .orbit-radial-sector.orbit-radial-active .orbit-radial-sector-shape,
 .orbit-radial-sector.orbit-radial-parent .orbit-radial-sector-shape {
   fill: url(#orbit-gradient-active);
-  stroke: #b0eee0a3;
+  stroke: var(--orbit-shine);
 }
 .orbit-radial-sector.orbit-radial-parent:not(.orbit-radial-active) { opacity: .92; }
 .orbit-radial-sector.orbit-radial-active .orbit-radial-sector-shape {
-  filter: drop-shadow(0 2px 7px #70ded32a) drop-shadow(2px 4px 5px var(--orbit-shadow));
+  filter: drop-shadow(2px 3px 6px var(--orbit-shadow))
+    drop-shadow(-1px -1px 3px var(--orbit-shine));
 }
 .orbit-radial-label {
-  font-size: 10.8px;
+  font-size: 10px;
   font-weight: 550;
   fill: var(--orbit-label);
   letter-spacing: .04px;
@@ -96,15 +120,14 @@
 }
 .orbit-radial-icon-image { pointer-events: none; }
 .orbit-radial-vector-icon { color: var(--orbit-icon); stroke: currentColor; pointer-events: none; }
-.orbit-radial-active .orbit-radial-vector-icon, .orbit-radial-parent .orbit-radial-vector-icon { color: #fff; }
+.orbit-radial-active .orbit-radial-vector-icon, .orbit-radial-parent .orbit-radial-vector-icon { color: var(--orbit-icon); }
 .orbit-radial-active .orbit-radial-icon,
 .orbit-radial-active .orbit-radial-label,
 .orbit-radial-parent .orbit-radial-label,
-.orbit-radial-parent .orbit-radial-icon { fill: #fff; }
+.orbit-radial-parent .orbit-radial-icon { fill: var(--orbit-icon); }
 .orbit-radial-disabled { opacity: .42; cursor: default; }
 .orbit-radial-checked .orbit-radial-label { font-weight: 700; }
-.orbit-radial-submenu-mark { font-size: 22px; fill: #a8e5ddbb; pointer-events: none; }
-.orbit-radial-orbit { fill: none; stroke: var(--orbit-line); stroke-width: .8; pointer-events: none; }
+.orbit-radial-submenu-mark { font-size: 22px; fill: var(--orbit-icon); pointer-events: none; }
 .orbit-radial-center {
   position: absolute;
   left: 50%;
@@ -113,14 +136,13 @@
   width: var(--orbit-center-size);
   height: var(--orbit-center-size);
   pointer-events: auto;
-  border: 1px solid var(--orbit-edge);
+  box-sizing: border-box;
+  border: 1px solid var(--orbit-line);
   border-radius: 50%;
-  background: radial-gradient(circle at 27% 18%, var(--orbit-shine), transparent 65%),
-    linear-gradient(140deg, var(--orbit-center-a), var(--orbit-center-b));
-  box-shadow: 5px 6px 14px var(--orbit-shadow),
-    -2px -2px 7px var(--orbit-shine), inset 0 1px 1px var(--orbit-shine);
-  backdrop-filter: blur(16px) saturate(1.15);
-  color: var(--orbit-label);
+  background: linear-gradient(135deg, var(--orbit-center-a), var(--orbit-center-b));
+  box-shadow: inset 3px 3px 7px var(--orbit-shadow),
+    inset -3px -3px 7px var(--orbit-shine);
+  color: var(--orbit-icon);
   font: inherit;
   cursor: pointer;
   display: flex;
@@ -133,9 +155,10 @@
   outline: none;
 }
 .orbit-radial-center.orbit-radial-active {
-  background: linear-gradient(140deg, #436e67, #565393);
-  border-color: #b0eee0a3;
-  box-shadow: 0 0 18px #70ded32e, 3px 5px 12px var(--orbit-shadow), inset 0 1px 0 #d3fff337;
+  background: linear-gradient(135deg, var(--orbit-active-a), var(--orbit-active-b));
+  border-color: var(--orbit-shine);
+  box-shadow: inset 2px 3px 7px var(--orbit-shadow),
+    inset -2px -2px 7px var(--orbit-shine), 0 0 12px #70ded312;
 }
 .orbit-radial-center:disabled { opacity: 1; cursor: default; }
 .orbit-radial-center:disabled .orbit-radial-center-icon { opacity: .65; }
@@ -158,13 +181,34 @@
   left: 50%;
   top: 50%;
   transform: translate(-50%, calc(var(--orbit-center-size) / 2 - 13px));
-  font-size: 6px;
+  font-size: 6.5px;
   letter-spacing: .8px;
   line-height: 1;
-  color: #bdd5e599;
+  color: var(--orbit-caption);
   white-space: nowrap;
   pointer-events: none;
 }
+.orbit-radial-command-label {
+  position: absolute;
+  box-sizing: border-box;
+  padding: 11px 15px;
+  border: 1px solid var(--orbit-shine);
+  border-radius: 18px;
+  background: linear-gradient(145deg, var(--orbit-surface-a), var(--orbit-surface-b));
+  box-shadow: 5px 7px 18px var(--orbit-deep-shadow), -2px -2px 7px var(--orbit-shine);
+  color: var(--orbit-label);
+  font-size: 12px;
+  line-height: 1.5;
+  font-weight: 550;
+  text-align: center;
+  overflow-wrap: anywhere;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.orbit-radial-command-label[hidden] { display: none; }
+.orbit-radial-visible .orbit-radial-command-label { opacity: 1; }
 .orbit-radial-menu:focus-visible .orbit-radial-center {
   outline: 2px solid #70ded38c;
   outline-offset: 3px;
@@ -184,30 +228,31 @@
 }
 @media (prefers-color-scheme: light) {
   .orbit-radial-root {
-    --orbit-sector-a: #f5f8fcf7;
-    --orbit-sector-b: #dfe7f1f7;
-    --orbit-active-a: #417c75;
-    --orbit-active-b: #6b66a9;
-    --orbit-label: #26374d;
-    --orbit-icon: #246e69;
-    --orbit-line: #536b8c30;
-    --orbit-edge: #ffffffd9;
-    --orbit-shadow: #8ba0b74a;
-    --orbit-shine: #ffffffd9;
-    --orbit-center-a: #f8fbff;
-    --orbit-center-b: #dfe6ef;
+    --orbit-surface-a: #f5f8fc;
+    --orbit-surface-b: #edf2f8;
+    --orbit-sector-a: #f8fbff;
+    --orbit-sector-b: #e7edf5;
+    --orbit-active-a: #d6eceb;
+    --orbit-active-b: #e6e9f5;
+    --orbit-label: #253449;
+    --orbit-icon: #245d70;
+    --orbit-line: #bfccdb7a;
+    --orbit-edge: #ffffffdb;
+    --orbit-shadow: #a4b3c857;
+    --orbit-deep-shadow: #94a5bb4d;
+    --orbit-shine: #ffffffdb;
+    --orbit-center-a: #d9eeed;
+    --orbit-center-b: #e6e9f5;
+    --orbit-caption: #586b80;
     color-scheme: light;
   }
-  .orbit-radial-center-icon { color: #246e69; }
-  .orbit-radial-center.orbit-radial-active,
-  .orbit-radial-center.orbit-radial-active .orbit-radial-center-icon { color: #fff; }
-  .orbit-radial-caption { color: #536b8c9c; }
-  .orbit-radial-submenu-mark { fill: #386b79bb; }
 }
 @media (prefers-reduced-motion: reduce) {
   .orbit-radial-root * { animation: none !important; transition: none !important; }
 }
 @media (forced-colors: active) {
+  .orbit-radial-disc { fill: Canvas !important; stroke: ButtonText !important; filter: none !important; }
+  .orbit-radial-fan-surface { stroke: Canvas !important; filter: none !important; }
   .orbit-radial-sector-shape { fill: Canvas !important; stroke: ButtonText !important; filter: none !important; }
   .orbit-radial-icon, .orbit-radial-label { fill: ButtonText !important; }
   .orbit-radial-vector-icon { color: ButtonText !important; }
@@ -225,5 +270,6 @@
   .orbit-radial-center.orbit-radial-active .orbit-radial-center-icon { color: HighlightText; }
   .orbit-radial-submenu-mark { fill: ButtonText; }
   .orbit-radial-caption { color: ButtonText; }
+  .orbit-radial-command-label { background: Canvas; color: CanvasText; border-color: ButtonText; box-shadow: none; }
   .orbit-radial-menu:focus-visible .orbit-radial-center { outline-color: Highlight; }
 }

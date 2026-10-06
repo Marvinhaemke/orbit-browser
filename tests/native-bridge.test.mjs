@@ -23,6 +23,7 @@ const browserWindows = new Set();
 let widgetProperties;
 const modules = {
   AboutNewTab: { newTabURL: "about:newtab" },
+  OrbitInteractions: { init() {}, uninit() {} },
   OrbitRadial: { init() {}, uninit() {} },
   OrbitTheme: { init() {}, uninit() {} },
   PrivateBrowsingUtils: { isWindowPrivate: win => win.private },
@@ -94,6 +95,11 @@ function attachWidget(win) {
 function createWindow(isPrivate = false) {
   const win = new EventTarget();
   win.private = isPrivate;
+  const timers = new Map();
+  let timerSerial = 0;
+  win.setTimeout = callback => { timers.set(++timerSerial, callback); return timerSerial; };
+  win.clearTimeout = id => timers.delete(id);
+  win.timers = timers;
   win.document = {
     win,
     defaultView: win,
@@ -315,6 +321,134 @@ test("return from a native canvas selects an existing page and retains canvas ta
   bridge.hideCanvas();
   assert.equal(win.gBrowser.selectedTab, tab);
   assert.equal(win.gURLBar.focused, true);
+  Orbit.uninit(win);
+});
+
+function nativeCaptureContext(win, overrides = {}) {
+  const context = {
+    browser: win.gBrowser.selectedBrowser,
+    actor: {
+      manager: { isCurrentGlobal: true, rootFrameLoader: { ownerElement: win.gBrowser.selectedBrowser } },
+      browsingContext: { ancestorsAreCurrent: true, isInBFCache: false, isDiscarded: false },
+    },
+    contentData: { docLocation: win.gBrowser.selectedBrowser.currentURI.spec },
+    ...overrides,
+  };
+  win.gContextMenu = context;
+  return context;
+}
+
+test("native Send to canvas saves and reuses page/link cards with their container without opening tabs", () => {
+  const win = createWindow();
+  Orbit.openBoard(win);
+  const source = win.gBrowser.selectedTab;
+  source.userContextId = 2;
+  const context = nativeCaptureContext(win, {
+    onLink: true, linkURL: "https://www.mozilla.org/", linkTextStr: "Mozilla research",
+  });
+  const page = Orbit.captureContext(win, context, "page");
+  const link = Orbit.captureContext(win, context, "link");
+  const saved = win.OrbitChrome.getBoard();
+  assert.equal(saved.items.length, 2);
+  assert.equal(saved.items[0].userContextId, 2);
+  assert.equal(saved.items[0].tabId, win.OrbitChrome.listTabs()[0].id);
+  assert.equal(saved.items[1].title, "Mozilla research");
+  assert.equal(saved.items[1].url, "https://www.mozilla.org/");
+  assert.equal(saved.items[1].userContextId, 2);
+  assert.equal(saved.items[1].tabId, undefined, "saved link does not create a new tab");
+  assert.equal(win.gBrowser.tabs.length, 1);
+  assert.equal(Orbit.captureContext(win, context, "page").id, page.id);
+  assert.equal(Orbit.captureContext(win, context, "link").id, link.id);
+  assert.equal(win.OrbitChrome.getBoard().items.length, 2);
+  assert.match(win.document.getElementById("orbit-capture-toast").textContent, /Already on your canvas/);
+  const nativeLink = win.gBrowser.addTab(context.linkURL, {
+    userContextId: 2, allowInheritPrincipal: false, triggeringPrincipal: { isSystemPrincipal: false },
+  });
+  Orbit.captureContext(win, context, "link");
+  assert.equal(win.OrbitChrome.getBoard().items[1].tabId, win.OrbitChrome.listTabs().find(tab => tab.url === context.linkURL).id);
+  assert.notEqual(nativeLink, win.gBrowser.selectedTab);
+  Orbit.uninit(win);
+  assert.equal(win.timers.size, 0);
+});
+
+test("selected text captures a bounded plain note and source URL, never password content", () => {
+  const win = createWindow();
+  Orbit.openBoard(win);
+  const context = nativeCaptureContext(win, {
+    isTextSelected: true, selectionInfo: { fullText: "<script>literal notes, no HTML</script>" },
+    contentData: { docLocation: "https://frame.example/research" },
+  });
+  const note = Orbit.captureContext(win, context, "selection");
+  assert.equal(note.type, "note");
+  assert.equal(win.OrbitChrome.getBoard().items[0].text,
+    "<script>literal notes, no HTML</script>\n\nSource: https://frame.example/research");
+  assert.equal(Orbit.captureContext(win, context, "selection").existing, true);
+  context.selectionInfo.fullText = "x".repeat(30000);
+  Orbit.captureContext(win, context, "selection");
+  assert.equal(win.OrbitChrome.getBoard().items[1].text.length, 20000);
+  for (const key of ["onPassword", "passwordRevealed"]) {
+    context[key] = true;
+    assert.throws(() => Orbit.captureContext(win, context, "selection"), /password/);
+    context[key] = false;
+  }
+  context.selectionInfo.fullText = "  ";
+  assert.throws(() => Orbit.captureContext(win, context, "selection"), /selected text/);
+  assert.equal(win.OrbitChrome.getBoard().items.length, 2);
+  Orbit.uninit(win);
+});
+
+test("Send to canvas rejects stale native contexts, foreign browsers and unsafe URLs", () => {
+  const win = createWindow();
+  Orbit.openBoard(win);
+  const context = nativeCaptureContext(win, { onLink: true });
+  for (const linkURL of ["javascript:alert(1)", "chrome://browser/content/browser.xhtml", "https://user:secret@example.com/"]) {
+    context.linkURL = linkURL;
+    assert.throws(() => Orbit.captureContext(win, context, "link"));
+  }
+  context.linkURL = "https://example.com/research";
+  context.actor.manager.isCurrentGlobal = false;
+  assert.throws(() => Orbit.captureContext(win, context, "link"), /current native/);
+  context.actor.manager.isCurrentGlobal = true;
+  context.actor.browsingContext.ancestorsAreCurrent = false;
+  assert.throws(() => Orbit.captureContext(win, context, "page"), /current native/);
+  context.actor.browsingContext.ancestorsAreCurrent = true;
+  context.actor.browsingContext.isInBFCache = true;
+  assert.throws(() => Orbit.captureContext(win, context, "page"), /current native/);
+  context.actor.browsingContext.isInBFCache = false;
+  context.actor.manager.rootFrameLoader.ownerElement = {};
+  assert.throws(() => Orbit.captureContext(win, context, "page"), /current native/);
+  context.actor.manager.rootFrameLoader.ownerElement = context.browser;
+  context.actor.browsingContext.isDiscarded = true;
+  assert.throws(() => Orbit.captureContext(win, context, "page"), /current native/);
+  context.actor.browsingContext.isDiscarded = false;
+  win.gContextMenu = { ...context };
+  assert.throws(() => Orbit.captureContext(win, context, "page"), /current native/);
+  win.gContextMenu = context;
+  win.gBrowser.selectedTab.closing = true;
+  assert.throws(() => Orbit.captureContext(win, context, "page"), /current native/);
+  win.gBrowser.selectedTab.closing = false;
+  context.browser.ownerDocument = createWindow().document;
+  assert.throws(() => Orbit.captureContext(win, context, "page"), /current native/);
+  assert.equal(win.OrbitChrome.getBoard(), null);
+  Orbit.uninit(win);
+});
+
+test("private capture and palette frame APIs keep their workspace isolated from persistence", () => {
+  const win = createWindow(true);
+  Orbit.openBoard(win);
+  const context = nativeCaptureContext(win, { isTextSelected: true, selectionInfo: { fullText: "Private idea" } });
+  const before = { reads, writes };
+  Orbit.captureContext(win, context, "page");
+  Orbit.captureContext(win, context, "selection");
+  const value = board();
+  value.items[0].userContextId = 0;
+  win.OrbitChrome.saveBoard(value);
+  const frames = Orbit.getFrames(win);
+  assert.deepEqual(frames, [{ id: "frame-1", title: "Research", tabCount: 1 }]);
+  frames[0].title = "Changed only in palette result";
+  assert.equal(Orbit.getFrames(win)[0].title, "Research");
+  assert.equal(Orbit.openFrame(win, "frame-1").opened, 1);
+  assert.deepEqual({ reads, writes }, before);
   Orbit.uninit(win);
 });
 
