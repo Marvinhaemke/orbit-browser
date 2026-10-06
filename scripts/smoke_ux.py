@@ -233,6 +233,37 @@ def restore_f6_fixture_frame(driver):
     driver.set_context("chrome")
 
 
+def record_search_probe(driver, result, label):
+    """Inspect Firefox's selected search implementation before widget cleanup."""
+    driver.set_context("chrome")
+    result.setdefault("native_search_probes", {})[label] = driver.execute_script('''
+        const describe = node => {
+            const box = node?.getBoundingClientRect(), style = node && getComputedStyle(node);
+            return {tag: node?.localName, id: node?.id, classes: node?.getAttribute?.("class"),
+                x: box?.x, y: box?.y, width: box?.width, height: box?.height,
+                visibility: style?.visibility, display: style?.display, opacity: style?.opacity};
+        };
+        const modern = Services.prefs.getBoolPref("browser.search.widget.new");
+        const selected = document.getElementById(modern ? "searchbar-new" : "searchbar");
+        const active = document.activeElement;
+        const ancestry = [];
+        for (let node = active; node;) {
+            ancestry.push(describe(node));
+            node = node.parentElement || node.getRootNode?.().host;
+        }
+        const implementations = ["searchbar", "searchbar-new"].map(id => {
+            const node = document.getElementById(id);
+            return {...describe(node), inputField: describe(node?.inputField),
+                textbox: describe(node?.textbox), ownsActiveInput: node?.inputField === active,
+                containsActive: node?.contains(active)};
+        });
+        return {modern, implementations, selected: describe(selected), active: describe(active), ancestry,
+            focusedNativeInput: selected?.inputField === active,
+            searchContainerContainsActive: document.getElementById("search-container")?.contains(active),
+            nativeToolbarRevealed: document.documentElement.getAttribute("data-orbit-focus-reveal") === "true"};
+    ''')
+
+
 def diagnose_focus_f6(driver, result, folder):
     """Probe native F6 reveal timing after failure; the caller still raises it."""
     driver.set_context("chrome")
@@ -775,19 +806,27 @@ def run_focus_checks(driver, handle, url, result, folder):
         window.orbitUXCustomizableUI.addWidgetToArea("search-container", window.orbitUXCustomizableUI.AREA_NAVBAR);
     ''')
     try:
-        wait_for(driver, 'return !!document.getElementById("searchbar");', "Firefox creates its actual customized search widget")
+        wait_for(driver, '''const search = document.getElementById(
+            Services.prefs.getBoolPref("browser.search.widget.new") ? "searchbar-new" : "searchbar");
+            return !!search?.inputField;''', "Firefox initializes its selected customized search implementation")
         chord(driver, Keys.CONTROL, "k")
-        wait_for(driver, '''const search = document.getElementById("searchbar");
-            return search?.contains(document.activeElement) &&
+        record_search_probe(driver, result, "after-shortcut")
+        wait_for(driver, '''const search = document.getElementById(
+            Services.prefs.getBoolPref("browser.search.widget.new") ? "searchbar-new" : "searchbar");
+            return search?.inputField === document.activeElement &&
                 document.documentElement.getAttribute("data-orbit-focus-reveal") === "true" &&
                 getComputedStyle(search).visibility === "visible";''',
                  "Ctrl+K reveals and focuses Firefox's real custom search widget")
+        record_search_probe(driver, result, "focused")
         assert focus_state(driver)["enabled"]
         move_to_content(driver, click=True)
         wait_for(driver, 'return !document.documentElement.hasAttribute("data-orbit-focus-reveal");',
                  "the full native strip recedes again after custom search loses focus")
         wait_focus_idle(driver)
         assert focus_state(driver)["tabVisibility"] == "hidden"
+    except Exception:
+        record_search_probe(driver, result, "failure-before-widget-removal")
+        raise
     finally:
         driver.set_context("chrome")
         driver.execute_script('window.orbitUXCustomizableUI.removeWidgetFromArea("search-container");')

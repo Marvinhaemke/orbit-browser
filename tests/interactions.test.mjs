@@ -427,6 +427,48 @@ test("a configured native search widget stays usable and folds after its edit or
   assert.equal(doc.activeElement, win.gBrowser.selectedBrowser); assert.equal(state.root.hasAttribute("data-orbit-focus-reveal"), false);
   assert.equal(state.focusMode, true); assert.equal(container.parentNode.id, "nav-bar"); state.destroy();
 });
+test("modern native search restores its whole widget after palette and window focus", () => {
+  const win = createWindow(); const doc = win.document;
+  const container = new Node(doc); container.id = "search-container";
+  const legacySearch = new Node(doc, "searchbar"); legacySearch.id = "searchbar";
+  const modernSearch = new Node(doc); modernSearch.id = "searchbar-new";
+  const input = new Node(doc, "input"); modernSearch.append(input);
+  // Firefox keeps the legacy and modern widgets as siblings. The active
+  // native input is not a descendant of the legacy #searchbar.
+  container.append(legacySearch, modernSearch); doc.getElementById("nav-bar").append(container);
+  const state = new InteractionWindow(win); state.setFocusMode(true);
+  assert.equal(legacySearch.contains(input), false);
+  input.focus(); assert.equal(doc.activeElement, win.gBrowser.selectedBrowser);
+  state.showSearchFallback();
+  assert.equal(state.searchFallback, container);
+  assert.equal(state.root.getAttribute("data-orbit-focus-reveal"), "true");
+  input.focus(); assert.equal(doc.activeElement, input);
+
+  state.open(); assert.equal(doc.activeElement, state.input);
+  state.scheduleConceal("address"); win.advance(350);
+  assert.equal(state.searchFallback, null);
+  assert.equal(state.root.hasAttribute("data-orbit-focus-reveal"), false);
+  state.close();
+  assert.equal(state.palette.hidden, true);
+  assert.equal(doc.activeElement, input, "Closing commands restores the modern native input");
+  assert.equal(state.searchFallback, container, "Restoring focus reveals both native search siblings");
+  assert.equal(state.root.getAttribute("data-orbit-focus-reveal"), "true");
+  win.advance(350);
+  assert.equal(state.root.getAttribute("data-orbit-focus-reveal"), "true");
+
+  win.emit("blur");
+  assert.equal(doc.activeElement, input);
+  assert.equal(state.searchFallback, null);
+  assert.equal(state.root.hasAttribute("data-orbit-focus-reveal"), false);
+  win.emit("focus");
+  assert.equal(doc.activeElement, input);
+  assert.equal(state.searchFallback, container, "Window focus restores the entire configured search widget");
+  assert.equal(state.root.getAttribute("data-orbit-focus-reveal"), "true");
+  state.scheduleConceal("address"); win.advance(350);
+  assert.equal(state.root.getAttribute("data-orbit-focus-reveal"), "true");
+  assert.deepEqual(container.children, [legacySearch, modernSearch]);
+  assert.equal(container.parentNode.id, "nav-bar"); state.destroy();
+});
 test("slow pointer travel through the tools corridor stays open and leaving starts grace", () => {
   const win = createWindow(); const state = new InteractionWindow(win); state.setFocusMode(true);
   assert.equal(state.focusTools.enabled, true);

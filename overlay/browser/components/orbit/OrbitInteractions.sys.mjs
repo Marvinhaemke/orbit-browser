@@ -402,7 +402,7 @@ export class InteractionWindow {
   }
 
   nativeSearchNode() {
-    const search = this.doc.getElementById("searchbar");
+    const search = this.doc.getElementById("search-container") || this.doc.getElementById("searchbar");
     return search?.isConnected && this.doc.getElementById("nav-bar")?.contains(search) ? search : null;
   }
 
