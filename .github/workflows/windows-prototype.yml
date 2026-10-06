@@ -2,7 +2,7 @@ name: Windows native prototype
 
 on:
   push:
-    branches: [main]
+    branches: [main, focus-diagnostics-tail]
   pull_request:
   workflow_dispatch:
 
