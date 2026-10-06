@@ -632,7 +632,7 @@ def run_focus_checks(driver, handle, url, result, folder):
     wait_focus_idle(driver)
     idle = focus_state(driver)
     assert_focus_geometry(idle)
-    assert idle["addressVisibility"] == "hidden" and not idle["toolsOpen"], idle
+    assert idle["address"]["opacity"] == "0" and idle["address"]["pointerEvents"] == "none" and not idle["toolsOpen"], idle
     assert driver.execute_script('''return document.getElementById("urlbar-container") === window.orbitUXNativeAddress &&
         window.orbitUXNativeWindowBoxes.every(({node, parent, next}) =>
             node.isConnected && node.parentNode === parent && node.nextSibling === next);''')

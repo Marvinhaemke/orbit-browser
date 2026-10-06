@@ -256,7 +256,10 @@
     -3px -3px 10px var(--orbit-action-highlight),
     inset 0 1px 0 var(--orbit-action-highlight) !important;
   overflow: visible !important;
-  visibility: hidden;
+  /* Native document traversal can reach this input before a chrome key event
+     arrives. Keep it focusable while opacity and hit testing conceal it;
+     the original field's focusin listener reveals the island immediately. */
+  visibility: visible;
   opacity: 0;
   pointer-events: none;
   -moz-window-dragging: no-drag;
@@ -264,7 +267,7 @@
   transition: width 340ms var(--orbit-action-ease),
     left 340ms var(--orbit-action-ease), top 240ms var(--orbit-action-ease),
     opacity 170ms ease, border-radius 300ms var(--orbit-action-ease),
-    box-shadow 240ms ease, visibility 0s 180ms;
+    box-shadow 240ms ease;
 }
 :root[data-orbit-focus="true"][data-orbit-focus-address-visible="true"]:not([data-orbit-focus-reveal="true"], [data-orbit-focus-measuring="true"])
 #urlbar-container[data-orbit-focus-address="true"] {
