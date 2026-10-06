@@ -400,6 +400,15 @@
 /* Native extension/download/settings panels need a real visible anchor.
    Float only that original control while its panel is open. */
 :root[data-orbit-focus="true"]:not([data-orbit-focus-reveal="true"], [data-orbit-focus-measuring="true"])
+#nav-bar-customization-target:has(> .orbit-focus-native-anchor) {
+  /* DownloadsButton checks its original parent's rectangle before using the
+     button. Keep this transparent frame measurable while its anchor is held;
+     the fixed zero-height toolbox still leaves the page's layout untouched. */
+  min-height: 40px !important;
+  height: 40px !important;
+  max-height: 40px !important;
+}
+:root[data-orbit-focus="true"]:not([data-orbit-focus-reveal="true"], [data-orbit-focus-measuring="true"])
 #navigator-toolbox .orbit-focus-native-anchor {
   position: fixed !important;
   top: var(--orbit-focus-anchor-top, 16px) !important;
