@@ -37,7 +37,7 @@ class UpdatePackageTests(unittest.TestCase):
         (self.package / "platform.ini").write_text("[Build]\nBuildID=20260101010101\n", encoding="utf-8")
         (self.package / "application.ini").write_text("[App]\nName=Orbit\nBuildID=20260102020202\n", encoding="utf-8")
         with zipfile.ZipFile(self.package / "omni.ja", "w") as archive:
-            for name in ("Orbit.sys.mjs", "OrbitRadial.sys.mjs", "OrbitRadialView.sys.mjs", "OrbitRadialChild.sys.mjs", "OrbitRadialParent.sys.mjs", "OrbitTheme.sys.mjs", "OrbitInteractions.sys.mjs"):
+            for name in ("Orbit.sys.mjs", "OrbitRadial.sys.mjs", "OrbitRadialView.sys.mjs", "OrbitRadialChild.sys.mjs", "OrbitRadialParent.sys.mjs", "OrbitTheme.sys.mjs", "OrbitInteractions.sys.mjs", "OrbitFocusTools.sys.mjs"):
                 archive.writestr(f"moz-src/browser/components/orbit/{name}", "native Orbit module fixture")
         with zipfile.ZipFile(self.package / "browser/omni.ja", "w") as archive:
             for name in ("orbit.html", "orbit.css", "orbit.js", "orbit.svg", "orbit-radial.css", "orbit-chrome.css", "orbit-interactions.css", "orbit-commands.svg"):

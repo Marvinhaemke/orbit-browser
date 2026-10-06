@@ -119,6 +119,7 @@ def apply_overlay(source: Path, root: Path = ROOT) -> None:
     overlay = root / "overlay"
     required = [
         "browser/components/orbit/Orbit.sys.mjs",
+        "browser/components/orbit/OrbitFocusTools.sys.mjs",
         "browser/components/orbit/OrbitInteractions.sys.mjs",
         "browser/components/orbit/OrbitRadial.sys.mjs",
         "browser/components/orbit/OrbitRadialView.sys.mjs",

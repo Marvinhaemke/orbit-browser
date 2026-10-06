@@ -20,7 +20,7 @@ class View {
 const captures = [];
 const modules = { OrbitRadialView: View, Orbit: {
   captureContext(win, context, kind) { captures.push({ win, context, kind }); },
-} };
+}, OrbitInteractions: { dismissTools(win) { win.focusToolsOpen = false; } } };
 globalThis.ChromeUtils = {
   defineESModuleGetters(target, getters) {
     for (const name of Object.keys(getters)) Object.defineProperty(target, name, { get: () => modules[name] });
@@ -261,6 +261,16 @@ test("modified activation dispatches XUL command on original item with original 
   assert.equal(dispatched.arguments[10], original);
   assert.equal(f.copy.commands, 0);
   OrbitRadial.uninit(f.win);
+});
+
+test("opening a native tab wheel dismisses that window's tools without affecting another window", () => {
+  const first = fixture(); const second = fixture();
+  first.win.focusToolsOpen = second.win.focusToolsOpen = true;
+  down(first);
+  assert.equal(first.view.model.mode, "tabs");
+  assert.equal(first.win.focusToolsOpen, false);
+  assert.equal(second.win.focusToolsOpen, true);
+  OrbitRadial.uninit(first.win); OrbitRadial.uninit(second.win);
 });
 
 test("held hover never selects; native TabSelect and late context suppression complete together", () => {

@@ -5,6 +5,7 @@
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   Orbit: "moz-src:///browser/components/orbit/Orbit.sys.mjs",
+  OrbitInteractions: "moz-src:///browser/components/orbit/OrbitInteractions.sys.mjs",
   OrbitRadialView: "moz-src:///browser/components/orbit/OrbitRadialView.sys.mjs",
 });
 const windows = new WeakMap();
@@ -235,6 +236,7 @@ class RadialWindow {
   }
 
   _show(mode, center, passthrough = false) {
+    lazy.OrbitInteractions?.dismissTools?.(this.win, "page-radial");
     this.mode = mode;
     this.view.show({
       mode, center, passthrough,

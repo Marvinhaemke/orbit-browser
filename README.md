@@ -31,7 +31,7 @@ The page wheel uses Firefox’s actual context commands for links, images, selec
 
 **Send to canvas** in a webpage's radial menu collects the page, a clicked link, or selected text. Cards keep the website's address and container; text becomes an editable note with its source address. Collecting a link does not create another browser tab. Captures join the current window's workspace, and private captures stay in memory.
 
-**Focus mode** (**Alt + Shift + F**) lets the browsing controls recede while you read. The visible **Show controls** button, hovering the top toolbar, keyboard focus, and **Ctrl + L** bring them back. **Escape** restores the full interface. This uses ordinary browser chrome and leaves Firefox's fullscreen mode available separately.
+**Focus mode** (**Alt + Shift + F**) gives the page room while browser controls become three independent islands. Approach the **top middle** for the floating address bar; click it or press **Ctrl + L** (**Command + L** on macOS) to expand the real address bar and its suggestions. Approach the **top left** for the tools radial menu, including native extension actions and browser settings. Approach the **top right** for the rounded island containing the original window controls. Each island stays open while you use it and recedes after you leave. The visible **Address bar** and **Exit focus** buttons also provide direct access. **Escape** dismisses active controls before restoring the full interface. This uses ordinary browser chrome and leaves Firefox's fullscreen mode available separately.
 
 ## Test interface changes without downloading the whole browser
 
@@ -56,7 +56,7 @@ The source implements:
 - A radial context menu on the canvas.
 - A searchable native command bar for open tabs, saved frames, and browser actions.
 - Page, link, and selected-text capture into the canvas from the webpage radial menu.
-- Reversible focus mode with controls revealed by pointer or keyboard.
+- Reversible focus mode with independent floating address, tools, and window controls.
 - Website peeking and comparison through native Gecko browsers and Firefox split views.
 - Session-backed workspace layouts, with private-window data kept in memory.
 - Keyboard controls and reduced-motion support.
@@ -77,6 +77,7 @@ python scripts/package_windows.py --source C:/orbit-firefox --output artifacts
 python -m pip install C:/orbit-firefox/testing/marionette/client
 python scripts/smoke_test.py --binary artifacts/Orbit/orbit.exe --report test-results/smoke.json
 python scripts/smoke_radial.py --binary artifacts/Orbit/orbit.exe --report test-results/radial/smoke.json
+python scripts/smoke_ux.py --binary artifacts/Orbit/orbit.exe --report test-results/ux/smoke.json
 ```
 
 `prepare_source.py` verifies the exact upstream revision and the original files before changing them. It refuses unexpected source changes. Repeating preparation on a matching checkout is supported.

@@ -4,7 +4,7 @@
 
 /* These surfaces live exclusively in browser.xhtml. Custom Firefox themes
    supply their own toolbar colors; Orbit's default uses the shared palette. */
-#orbit-command-palette, #orbit-focus-chip {
+#orbit-command-palette, #orbit-focus-chip, :root[data-orbit-focus="true"] {
   --orbit-action-base: var(--toolbar-background-color, #e9eef5);
   --orbit-action-ink: var(--toolbar-text-color, #253247);
   --orbit-action-muted: color-mix(in srgb, var(--orbit-action-ink) 68%, var(--orbit-action-base));
@@ -13,10 +13,13 @@
   --orbit-action-line: color-mix(in srgb, var(--orbit-action-ink) 16%, transparent);
   --orbit-action-accent: #70ded3;
   --orbit-action-ease: cubic-bezier(.18,.88,.24,1);
+}
+#orbit-command-palette, #orbit-focus-chip, #orbit-focus-tools-trigger {
   color: var(--orbit-action-ink);
   font: menu;
   box-sizing: border-box;
 }
+:root[data-orbit-theme="default"][data-orbit-focus="true"],
 :root[data-orbit-theme="default"] :is(#orbit-command-palette, #orbit-focus-chip) {
   --orbit-action-base: var(--orbit-chrome-base);
   --orbit-action-ink: var(--orbit-chrome-ink);
@@ -147,38 +150,298 @@
 #orbit-command-empty { padding: 18px 12px; color: var(--orbit-action-muted); }
 .orbit-command-hint { margin: 0; text-align: center; font-size: 11px; color: var(--orbit-action-muted); }
 
-/* Keep the native titlebar and OS window buttons. Only the navigation and
-   bookmarks rows collapse; tab controls recede while the titlebar remains. */
-:root[data-orbit-focus="true"] #navigator-toolbox :is(#nav-bar, #PersonalToolbar) {
-  transition: opacity 180ms var(--orbit-chrome-ease, ease),
-    max-height 220ms var(--orbit-chrome-ease, ease), padding 220ms ease;
-}
-:root[data-orbit-focus="true"]:not([data-orbit-focus-reveal="true"])
-#navigator-toolbox #PersonalToolbar,
-:root[data-orbit-focus="true"]:not([data-orbit-focus-reveal="true"]):not([data-orbit-focus-nav-titlebar])
-#navigator-toolbox #nav-bar {
+/* Native controls keep their original nodes, event handlers and popup anchors.
+   The toolbox leaves page layout while its independently revealed islands
+   remain in the same native hierarchy. Never fade, transform or display:none
+   an island's ancestors: Firefox positions its own URL results and panels. */
+:root[data-orbit-focus="true"]:not([data-orbit-focus-reveal="true"], [data-orbit-focus-measuring="true"])
+#navigator-toolbox {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  width: 100% !important;
+  height: 0 !important;
   min-height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  overflow: visible !important;
+  visibility: hidden;
+  pointer-events: none;
+  z-index: 2147483643 !important;
+}
+:root[data-orbit-focus="true"]:not([data-orbit-focus-reveal="true"], [data-orbit-focus-measuring="true"])
+#navigator-toolbox > :is(toolbar, #titlebar),
+:root[data-orbit-focus="true"]:not([data-orbit-focus-reveal="true"], [data-orbit-focus-measuring="true"])
+#navigator-toolbox [data-orbit-focus-island-parent="true"] {
+  min-height: 0 !important;
+  height: 0 !important;
   max-height: 0 !important;
+  margin-block: 0 !important;
   padding-block: 0 !important;
-  border-block-width: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  overflow: visible !important;
+  opacity: 1 !important;
+  pointer-events: none;
+}
+:root[data-orbit-focus="true"]:not([data-orbit-focus-reveal="true"], [data-orbit-focus-measuring="true"])
+#navigator-toolbox :is(#TabsToolbar, #toolbar-menubar, #PersonalToolbar,
+  #TabsToolbar > :not([data-orbit-focus-island-parent="true"], [data-orbit-focus-window-controls="true"], .orbit-focus-native-anchor),
+  #toolbar-menubar > :not([data-orbit-focus-island-parent="true"], [data-orbit-focus-window-controls="true"], .orbit-focus-native-anchor),
+  #nav-bar-customization-target > :not([data-orbit-focus-address="true"], .orbit-focus-native-anchor),
+  #nav-bar > :not([data-orbit-focus-island-parent="true"], [data-orbit-focus-window-controls="true"], .orbit-focus-native-anchor),
+  .titlebar-buttonbox-container:not([data-orbit-focus-window-controls="true"])) {
+  visibility: hidden;
+  pointer-events: none;
+}
+:root[data-orbit-focus="true"]:not([data-orbit-focus-reveal="true"], [data-orbit-focus-measuring="true"])
+#navigator-toolbox [data-orbit-focus-island-parent="true"] {
+  visibility: visible;
+}
+:root[data-orbit-focus="true"]:not([data-orbit-focus-reveal="true"], [data-orbit-focus-measuring="true"])
+:is(#sidebar-container, #sidebar-main, sidebar-main):has(#tabbrowser-tabs),
+:root[data-orbit-focus="true"]:not([data-orbit-focus-reveal="true"], [data-orbit-focus-measuring="true"])
+#sidebar-container:has(#tabbrowser-tabs) ~ #sidebar-launcher-splitter {
+  min-width: 0 !important;
+  width: 0 !important;
+  max-width: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
   overflow: hidden !important;
-  opacity: 0;
   visibility: hidden;
   pointer-events: none;
 }
-:root[data-orbit-focus="true"][data-orbit-focus-nav-titlebar]:not([data-orbit-focus-reveal="true"])
-#nav-bar > :not(.titlebar-buttonbox-container, .titlebar-spacer) {
-  opacity: 0;
-  visibility: hidden;
-  pointer-events: none;
+:root[data-orbit-focus="true"]:not([data-orbit-focus-reveal="true"], [data-orbit-focus-measuring="true"])
+#browser:has(#sidebar-container #tabbrowser-tabs) > #tabbrowser-tabbox {
+  margin-inline: 0 !important;
 }
-:root[data-orbit-focus="true"]:not([data-orbit-focus-reveal="true"])
-#TabsToolbar :is(#tabbrowser-tabs, #tabs-newtab-button, #new-tab-button,
-  #alltabs-button, #firefox-view-button, #tabbrowser-arrowscrollbox-periphery,
-  #TabsToolbar-customization-target > .toolbarbutton-1) {
-  opacity: 0;
+
+/* The address island grows around its center without a CSS transform, so the
+   native suggestions popover can follow its real input anchor at every width. */
+:root[data-orbit-focus="true"]:not([data-orbit-focus-reveal="true"], [data-orbit-focus-measuring="true"])
+#urlbar-container[data-orbit-focus-address="true"] {
+  --orbit-focus-address-width: min(440px, calc(100vw - 336px));
+  --urlbar-margin-inline: 0px;
+  --urlbar-container-padding-block: 0px;
+  --urlbar-container-min-width: 0px;
+  --urlbar-height: 36px;
+  position: fixed !important;
+  top: 4px !important;
+  left: calc(50% - var(--orbit-focus-address-width) / 2) !important;
+  right: auto !important;
+  display: flex !important;
+  align-items: center;
+  width: var(--orbit-focus-address-width) !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  min-height: 52px !important;
+  height: auto !important;
+  max-height: none !important;
+  flex: none !important;
+  margin: 0 !important;
+  padding: 7px 10px !important;
+  box-sizing: border-box;
+  border: 1px solid var(--orbit-action-line) !important;
+  border-radius: 28px !important;
+  background: color-mix(in srgb, var(--orbit-action-base) 96%, transparent) !important;
+  color: var(--orbit-action-ink);
+  backdrop-filter: blur(18px) saturate(1.12);
+  box-shadow: 8px 12px 28px color-mix(in srgb, var(--orbit-action-shadow) 85%, #07132120),
+    -3px -3px 10px var(--orbit-action-highlight),
+    inset 0 1px 0 var(--orbit-action-highlight) !important;
+  overflow: visible !important;
   visibility: hidden;
+  opacity: 0;
   pointer-events: none;
+  -moz-window-dragging: no-drag;
+  z-index: 2;
+  transition: width 340ms var(--orbit-action-ease),
+    left 340ms var(--orbit-action-ease), top 240ms var(--orbit-action-ease),
+    opacity 170ms ease, border-radius 300ms var(--orbit-action-ease),
+    box-shadow 240ms ease, visibility 0s 180ms;
+}
+:root[data-orbit-focus="true"][data-orbit-focus-address-visible="true"]:not([data-orbit-focus-reveal="true"], [data-orbit-focus-measuring="true"])
+#urlbar-container[data-orbit-focus-address="true"] {
+  top: 12px !important;
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+  transition-delay: 0s;
+}
+:root[data-orbit-focus="true"][data-orbit-focus-address-expanded="true"]:not([data-orbit-focus-reveal="true"], [data-orbit-focus-measuring="true"])
+#urlbar-container[data-orbit-focus-address="true"] {
+  --orbit-focus-address-width: min(780px, calc(100vw - 336px));
+  --urlbar-height: 40px;
+  min-height: 58px !important;
+  border-radius: 30px !important;
+  border-color: color-mix(in srgb, var(--orbit-action-accent) 60%, var(--orbit-action-line)) !important;
+  box-shadow: 10px 16px 38px color-mix(in srgb, var(--orbit-action-shadow) 85%, #07132120),
+    -3px -3px 12px var(--orbit-action-highlight),
+    inset 0 1px 0 var(--orbit-action-highlight),
+    0 0 0 3px color-mix(in srgb, var(--orbit-action-accent) 12%, transparent) !important;
+}
+:root[data-orbit-focus="true"] #urlbar-container[data-orbit-focus-address="true"] > #urlbar {
+  flex: 1 !important;
+  min-width: 0 !important;
+  --urlbar-border-radius: 20px;
+  --urlbar-background-border-radius: 20px;
+}
+
+/* The actual platform buttons form a second island. Their native commands,
+   maximize/restore visibility and Windows snap-layout behavior stay intact. */
+:root[data-orbit-focus="true"]:not([data-orbit-focus-reveal="true"], [data-orbit-focus-measuring="true"])
+.titlebar-buttonbox-container[data-orbit-focus-window-controls="true"] {
+  position: fixed !important;
+  top: 4px !important;
+  right: 14px !important;
+  left: auto !important;
+  min-height: 42px !important;
+  height: auto !important;
+  max-height: none !important;
+  margin: 0 !important;
+  padding: 4px !important;
+  box-sizing: border-box;
+  border: 1px solid var(--orbit-action-line) !important;
+  border-radius: 23px !important;
+  color: var(--orbit-action-ink);
+  background: color-mix(in srgb, var(--orbit-action-base) 96%, transparent) !important;
+  backdrop-filter: blur(18px) saturate(1.12);
+  box-shadow: 6px 9px 24px var(--orbit-action-shadow),
+    -2px -2px 8px var(--orbit-action-highlight),
+    inset 0 1px 0 var(--orbit-action-highlight) !important;
+  overflow: visible !important;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  -moz-window-dragging: drag;
+  z-index: 3;
+  transition: top 240ms var(--orbit-action-ease), opacity 170ms ease,
+    box-shadow 200ms ease, visibility 0s 180ms;
+}
+:root[data-orbit-focus="true"][data-orbit-focus-window-visible="true"]:not([data-orbit-focus-reveal="true"], [data-orbit-focus-measuring="true"])
+.titlebar-buttonbox-container[data-orbit-focus-window-controls="true"] {
+  top: 12px !important;
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+  transition-delay: 0s;
+}
+:root[data-orbit-focus="true"]:not([data-orbit-focus-reveal="true"], [data-orbit-focus-measuring="true"])
+[data-orbit-focus-window-controls="true"] .titlebar-button {
+  min-width: 38px;
+  min-height: 32px;
+  margin: 0 1px;
+  padding: 8px 12px;
+  border-radius: 17px;
+  -moz-window-dragging: no-drag;
+  transition: background-color 150ms ease, box-shadow 180ms var(--orbit-action-ease);
+}
+
+/* Small physical edge sensors remain keyboard-independent. Each reveal
+   changes only its own island; the untouched regions remain transparent. */
+.orbit-focus-hotzone {
+  position: fixed;
+  top: 0;
+  width: 64px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  z-index: 2147483642;
+}
+.orbit-focus-hotzone[hidden], #orbit-focus-tools-trigger[hidden] { display: none !important; }
+#orbit-focus-address-hotzone { width: min(320px, calc(100vw - 144px)); left: 50%; margin-left: calc(min(320px, calc(100vw - 144px)) / -2); }
+#orbit-focus-tools-hotzone { left: 0; }
+#orbit-focus-window-hotzone { right: 0; }
+#orbit-focus-tools-trigger {
+  appearance: none;
+  position: fixed;
+  top: 12px;
+  left: 14px;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  padding: 10px;
+  border: 1px solid var(--orbit-action-line);
+  border-radius: 50%;
+  background: var(--orbit-action-base);
+  box-shadow: 5px 7px 18px var(--orbit-action-shadow),
+    -3px -3px 9px var(--orbit-action-highlight),
+    inset 0 1px 0 var(--orbit-action-highlight);
+  color: var(--orbit-action-ink);
+  cursor: pointer;
+  z-index: 2147483644;
+  transition: box-shadow 180ms var(--orbit-action-ease), border-color 160ms ease;
+}
+#orbit-focus-tools-trigger:is(:hover, :focus-visible) { border-color: var(--orbit-action-accent); }
+#orbit-focus-tools-trigger:active {
+  box-shadow: inset 2px 2px 5px var(--orbit-action-shadow),
+    inset -2px -2px 5px var(--orbit-action-highlight);
+}
+#orbit-focus-tools-trigger img, #orbit-focus-tools-trigger svg { width: 22px; height: 22px; }
+
+/* Native extension/download/settings panels need a real visible anchor.
+   Float only that original control while its panel is open. */
+:root[data-orbit-focus="true"]:not([data-orbit-focus-reveal="true"], [data-orbit-focus-measuring="true"])
+#navigator-toolbox .orbit-focus-native-anchor {
+  position: fixed !important;
+  top: var(--orbit-focus-anchor-top, 16px) !important;
+  left: var(--orbit-focus-anchor-left, 32px) !important;
+  right: auto !important;
+  min-width: 40px !important;
+  min-height: 40px !important;
+  height: auto !important;
+  max-height: none !important;
+  margin: 0 !important;
+  padding: 4px !important;
+  box-sizing: border-box;
+  border: 1px solid var(--orbit-action-line) !important;
+  border-radius: 16px !important;
+  background: var(--orbit-action-base) !important;
+  color: var(--orbit-action-ink);
+  box-shadow: 5px 7px 18px var(--orbit-action-shadow),
+    -2px -2px 6px var(--orbit-action-highlight) !important;
+  overflow: visible !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  transform: none !important;
+  pointer-events: auto !important;
+  -moz-window-dragging: no-drag;
+  z-index: 5;
+}
+:root[data-orbit-focus="true"] #navigator-toolbox .orbit-focus-native-anchor * {
+  visibility: visible;
+  pointer-events: auto;
+}
+@media (max-width: 700px) {
+  :root[data-orbit-focus="true"]:not([data-orbit-focus-reveal="true"], [data-orbit-focus-measuring="true"])
+  #urlbar-container[data-orbit-focus-address="true"] {
+    --orbit-focus-address-width: min(440px, calc(100vw - 32px));
+    top: 52px !important;
+  }
+  :root[data-orbit-focus="true"][data-orbit-focus-address-visible="true"]:not([data-orbit-focus-reveal="true"], [data-orbit-focus-measuring="true"])
+  #urlbar-container[data-orbit-focus-address="true"] { top: 60px !important; }
+  :root[data-orbit-focus="true"][data-orbit-focus-address-expanded="true"]:not([data-orbit-focus-reveal="true"], [data-orbit-focus-measuring="true"])
+  #urlbar-container[data-orbit-focus-address="true"] {
+    --orbit-focus-address-width: calc(100vw - 32px);
+  }
+}
+@media (-moz-platform: macos) {
+  /* macOS owns traffic-light hit regions at the native left edge. Preserve
+     that position rather than replacing them with imitation window buttons. */
+  :root[data-orbit-focus="true"][data-orbit-focus-native-titlebar]
+  .titlebar-buttonbox-container[data-orbit-focus-window-controls="true"] {
+    right: auto !important;
+    left: 14px !important;
+  }
+  :root[data-orbit-focus="true"][data-orbit-focus-native-titlebar] #orbit-focus-tools-trigger { left: 106px; }
 }
 #orbit-focus-chip {
   position: fixed;
@@ -208,14 +471,15 @@
 @media (prefers-reduced-motion: reduce) {
   #orbit-command-palette, #orbit-command-panel, #orbit-focus-chip,
   #orbit-command-close, #orbit-command-input, .orbit-command-result,
-  #orbit-focus-chip button,
-  :root[data-orbit-focus="true"] #navigator-toolbox :is(#nav-bar, #PersonalToolbar) {
+  #orbit-focus-chip button, #orbit-focus-tools-trigger,
+  :root[data-orbit-focus="true"] :is(#urlbar-container[data-orbit-focus-address="true"],
+    [data-orbit-focus-window-controls="true"], .titlebar-button, .orbit-focus-native-anchor) {
     animation: none !important;
     transition: none !important;
   }
 }
 @media (forced-colors: active) {
-  #orbit-command-palette, #orbit-focus-chip {
+  #orbit-command-palette, #orbit-focus-chip, :root[data-orbit-focus="true"] {
     --orbit-action-base: Canvas;
     --orbit-action-ink: CanvasText;
     --orbit-action-muted: CanvasText;
@@ -225,6 +489,15 @@
     --orbit-action-accent: Highlight;
   }
   #orbit-command-palette { background: transparent; backdrop-filter: none; }
+  :root[data-orbit-focus="true"] :is(#urlbar-container[data-orbit-focus-address="true"],
+    [data-orbit-focus-window-controls="true"], .orbit-focus-native-anchor),
+  #orbit-focus-tools-trigger {
+    background: Canvas !important;
+    color: CanvasText !important;
+    border-color: ButtonText !important;
+    box-shadow: none !important;
+    backdrop-filter: none;
+  }
   .orbit-command-result[aria-selected="true"] {
     background: Highlight;
     color: HighlightText;

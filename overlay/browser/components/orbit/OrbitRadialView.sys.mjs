@@ -178,9 +178,13 @@ function shortLines(value, limit) {
 }
 
 export class OrbitRadialView {
-  constructor(win) {
+  constructor(win, {idPrefix = "orbit-radial", caption = null} = {}) {
+    if (!/^[a-z][a-z\d-]*$/i.test(idPrefix)) throw new TypeError("Invalid radial view ID prefix");
     this.win = win;
     this.doc = win.document;
+    this.idPrefix = idPrefix;
+    this.gradientPrefix = idPrefix === "orbit-radial" ? "orbit" : idPrefix;
+    this.menuCaption = caption;
     this.root = null;
     this.panel = null;
     this.caption = null;
@@ -245,14 +249,17 @@ export class OrbitRadialView {
       this.doc.documentElement.append(sheet);
     }
     this.root = this._html("div", "orbit-radial-root");
-    this.root.id = "orbit-radial-root";
+    this.root.id = `${this.idPrefix}-root`;
+    for (const name of ["surface", "base", "active"]) {
+      this.root.style.setProperty(`--orbit-gradient-${name}`, `url(#${this.gradientPrefix}-gradient-${name})`);
+    }
     this.panel = this._html("div", "orbit-radial-menu");
-    this.panel.id = "orbit-radial-menu";
+    this.panel.id = `${this.idPrefix}-menu`;
     this.panel.tabIndex = 0;
     this.panel.setAttribute("role", "menu");
     this.panel.setAttribute("aria-label", "Orbit radial menu");
     this.caption = this._html("div", "orbit-radial-command-label");
-    this.caption.id = "orbit-radial-command-label";
+    this.caption.id = `${this.idPrefix}-command-label`;
     this.caption.setAttribute("aria-hidden", "true");
     this.caption.hidden = true;
     this.root.append(this.panel, this.caption);
@@ -291,7 +298,7 @@ export class OrbitRadialView {
     this.root.dataset.mode = model.mode || "context";
     this.root.classList.toggle("orbit-radial-morph", hadMenu);
     this._render();
-    if (!model.passthrough) this.panel.focus({preventScroll: true});
+    if (!model.passthrough && model.focus !== false) this.panel.focus({preventScroll: true});
     this.win.requestAnimationFrame(() => this.root?.classList.add("orbit-radial-visible"));
     if (hadMenu) this.win.setTimeout(() => this.root?.classList.remove("orbit-radial-morph"), 180);
     return this;
@@ -368,7 +375,7 @@ export class OrbitRadialView {
     for (const [name, first, second] of [["surface", "--orbit-surface-a", "--orbit-surface-b"],
       ["base", "--orbit-sector-a", "--orbit-sector-b"],
       ["active", "--orbit-active-a", "--orbit-active-b"]]) {
-      const gradient = this._svg("linearGradient", {id: `orbit-gradient-${name}`, x1: "0", y1: "0", x2: "1", y2: "1"});
+      const gradient = this._svg("linearGradient", {id: `${this.gradientPrefix}-gradient-${name}`, x1: "0", y1: "0", x2: "1", y2: "1"});
       const start = this._svg("stop", {offset: "0%"});
       start.style.setProperty("stop-color", `var(${first})`);
       const end = this._svg("stop", {offset: "100%"});
@@ -423,7 +430,7 @@ export class OrbitRadialView {
         const sector = ring.sectors[index];
         const angle = sector.angle;
         const g = this._svg("g", {class: "orbit-radial-sector", role: "menuitem", tabindex: "-1",
-          id: `orbit-radial-option-${depth}-${index}`,
+          id: `${this.idPrefix}-option-${depth}-${index}`,
           "aria-label": String(node.label || node.id), "aria-disabled": String(!!node.disabled),
           "data-orbit-id": node.id, "data-orbit-depth": depth, "data-orbit-index": index});
         g.setAttribute("data-orbit-angle", angle);
@@ -480,7 +487,7 @@ export class OrbitRadialView {
     }
     this.ringSignatures = signatures;
     const center = this._html("button", "orbit-radial-center");
-    center.id = "orbit-radial-center";
+    center.id = `${this.idPrefix}-center`;
     center.type = "button";
     center.tabIndex = -1;
     center.disabled = !!this.model.centerItem?.disabled;
@@ -492,7 +499,7 @@ export class OrbitRadialView {
       this._html("span", "orbit-radial-center-icon", this.model.centerItem ? iconText(this.model.centerItem) : "◉");
     centerIcon.classList.add("orbit-radial-center-icon");
     center.append(centerIcon, this._html("span", "orbit-radial-center-label", this.model.centerItem?.label || "Orbit"));
-    const caption = this._html("div", "orbit-radial-caption", this.path.length > 3 ? `DEPTH ${this.path.length + 1}` : this.model.mode === "tabs" ? "YOUR OPEN TABS" : "PAGE ACTIONS");
+    const caption = this._html("div", "orbit-radial-caption", this.path.length > 3 ? `DEPTH ${this.path.length + 1}` : this.menuCaption || (this.model.mode === "tabs" ? "YOUR OPEN TABS" : "PAGE ACTIONS"));
     caption.setAttribute("aria-hidden", "true");
     this.panel.replaceChildren(svg, center, caption);
     this._positionCaption();
@@ -585,8 +592,8 @@ export class OrbitRadialView {
     }
     this.panel.setAttribute("aria-label", this.active?.node?.label ? `Orbit menu: ${this.active.node.label}` : "Orbit radial menu");
     if (this.active?.node) {
-      this.panel.setAttribute("aria-activedescendant", this.active.depth === -1 ? "orbit-radial-center" :
-        `orbit-radial-option-${this.active.depth}-${this.active.index}`);
+      this.panel.setAttribute("aria-activedescendant", this.active.depth === -1 ? `${this.idPrefix}-center` :
+        `${this.idPrefix}-option-${this.active.depth}-${this.active.index}`);
     } else this.panel.removeAttribute("aria-activedescendant");
   }
 
@@ -610,6 +617,7 @@ export class OrbitRadialView {
 
   _keyboard(event) {
     if (!this.model || !this.root || this.root.classList.contains("orbit-radial-leaving")) return;
+    if (this.model.focus === false && !this.root.contains(this.doc.activeElement)) return;
     if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
     if (event.key === "Escape") {
       event.preventDefault(); event.stopPropagation();

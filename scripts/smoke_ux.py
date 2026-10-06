@@ -15,7 +15,9 @@ from pathlib import Path
 import tempfile
 import threading
 import traceback
+from zipfile import ZipFile
 
+from marionette_driver.addons import Addons
 from marionette_driver.by import By
 from marionette_driver.keys import Keys
 from marionette_driver.marionette import Marionette
@@ -26,6 +28,9 @@ from smoke_radial import (
     select_fixture, settle_radial, wait_for,
 )
 from smoke_test import canvas_shortcut, chord, native_canvas_ready, new_handle, open_canvas
+
+TOOLS_ROOT_ID = "orbit-focus-tools-root"
+EXTENSION_ID = "orbit-focus-smoke@orbit.invalid"
 
 
 def initialize_bridge(driver):
@@ -88,6 +93,8 @@ def screenshot(driver, folder, name, result):
     settle_radial(driver)
     (folder / f"{name}.png").write_bytes(driver.screenshot(format="binary", full=False))
     result["screenshots"].append(f"{name}.png")
+    if name.startswith("ux-focus"):
+        result.setdefault("focus_states", {})[name] = focus_state(driver)
 
 
 def capture(driver, handle, kind, target="blank-target"):
@@ -113,18 +120,489 @@ def focus_state(driver):
         const root = document.documentElement;
         const toolbox = document.getElementById("navigator-toolbox");
         const chip = document.getElementById("orbit-focus-chip");
-        const box = toolbox.getBoundingClientRect();
-        const chipBox = chip.getBoundingClientRect();
         const address = document.getElementById("urlbar-container");
         const tabs = document.getElementById("tabbrowser-tabs");
+        const geometry = node => {
+            const rect = node?.getBoundingClientRect();
+            const style = node && getComputedStyle(node);
+            return {x: rect?.x, y: rect?.y, width: rect?.width, height: rect?.height,
+                right: rect?.right, bottom: rect?.bottom, visibility: style?.visibility,
+                opacity: style?.opacity, pointerEvents: style?.pointerEvents,
+                shadow: style?.boxShadow, radius: style?.borderRadius};
+        };
+        const box = geometry(toolbox);
+        const chipBox = geometry(chip);
+        const controls = [...document.querySelectorAll('[data-orbit-focus-window-controls="true"]')];
+        const tools = document.getElementById(arguments[0]);
         return {enabled: root.getAttribute("data-orbit-focus") === "true",
-            revealed: root.getAttribute("data-orbit-focus-reveal") === "true",
+            addressVisible: root.getAttribute("data-orbit-focus-address-visible") === "true",
+            addressExpanded: root.getAttribute("data-orbit-focus-address-expanded") === "true",
+            windowVisible: root.getAttribute("data-orbit-focus-window-visible") === "true",
+            toolsVisible: root.getAttribute("data-orbit-focus-tools-visible") === "true",
             chipVisible: !chip.hidden && chipBox.width > 0 && chipBox.height > 0,
-            toolboxTop: box.top, toolboxBottom: box.bottom,
+            toolboxTop: box.y, toolboxBottom: box.bottom,
+            viewport: {width: innerWidth, height: innerHeight},
+            address: geometry(address), windowControls: controls.map(geometry),
+            addressMarked: address.getAttribute("data-orbit-focus-address") === "true",
             addressVisibility: getComputedStyle(address).visibility,
             tabVisibility: getComputedStyle(tabs).visibility,
-            focusedAddress: gURLBar.focused};
+            focusedAddress: gURLBar.focused,
+            toolsOpen: !!tools && !tools.hidden && getComputedStyle(tools).display !== "none",
+            autocompleteOpen: gURLBar.view.isOpen};
+    ''', script_args=[TOOLS_ROOT_ID])
+
+
+def hover_focus_zone(driver, zone):
+    """Move from real content into the native chrome's independently owned hotzone."""
+    driver.set_context("chrome")
+    point = driver.execute_script('''
+        const node = document.getElementById(arguments[0]);
+        const box = node.getBoundingClientRect();
+        if (node.hidden || !box.width || !box.height) throw new Error("Focus hotzone is not available");
+        return {x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2)};
+    ''', script_args=[f"orbit-focus-{zone}-hotzone"])
+    pointer(driver).pointer_move(point["x"], point["y"], duration=35, origin="viewport").perform()
+    attribute = f"data-orbit-focus-{zone}-visible"
+    wait_for(driver, 'return document.documentElement.getAttribute(arguments[0]) === "true";',
+             f"trusted pointer reveals only the native {zone} island", [attribute])
+    settle_radial(driver)
+    return focus_state(driver)
+
+
+def move_to_content(driver, click=False):
+    driver.set_context("chrome")
+    point = driver.execute_script('return {x: Math.round(innerWidth / 2), y: Math.round(innerHeight * .68)};')
+    action = pointer(driver).pointer_move(point["x"], point["y"], duration=35, origin="viewport")
+    if click:
+        action.click()
+    action.perform()
+
+
+def wait_focus_idle(driver):
+    wait_for(driver, '''
+        const root = document.documentElement;
+        return root.getAttribute("data-orbit-focus") === "true" &&
+            !["address", "window", "tools"].some(name =>
+                root.getAttribute("data-orbit-focus-" + name + "-visible") === "true") &&
+            root.getAttribute("data-orbit-focus-address-expanded") !== "true";
+    ''', "each floating island recedes independently after native focus returns to content")
+    settle_radial(driver)
+
+
+def assert_focus_geometry(state, compact=None):
+    assert state["enabled"] and state["addressMarked"] and state["chipVisible"], state
+    assert state["tabVisibility"] == "hidden", state
+    if state["addressVisible"]:
+        box = state["address"]
+        assert box["visibility"] == "visible" and box["width"] > 180 and box["height"] > 20, state
+        assert 0 <= box["x"] < box["right"] <= state["viewport"]["width"] + 1, state
+        assert 0 <= box["y"] < box["bottom"] < 140, state
+        assert abs((box["x"] + box["right"]) / 2 - state["viewport"]["width"] / 2) < 3, state
+        assert box["radius"] != "0px" and box["shadow"] != "none", state
+        if compact is not None:
+            assert box["width"] > compact["address"]["width"] + 60, (compact, state)
+    if state["windowVisible"]:
+        visible = [box for box in state["windowControls"]
+                   if box["visibility"] == "visible" and box["width"] > 0 and box["height"] > 0]
+        assert visible, state
+        for box in visible:
+            assert 0 <= box["x"] < box["right"] <= state["viewport"]["width"] + 1, state
+            assert 0 <= box["y"] < box["bottom"] < 100, state
+            assert box["radius"] != "0px" and box["shadow"] != "none", state
+
+
+def tools_state(driver):
+    return driver.execute_script('''
+        const root = document.getElementById(arguments[0]);
+        const visible = !!root && !root.hidden && !root.classList.contains("orbit-radial-leaving") &&
+            getComputedStyle(root).display !== "none";
+        return {visible, mode: root?.dataset.mode,
+            items: visible ? [...root.querySelectorAll("[data-orbit-id]")].map(node => ({
+                id: node.dataset.orbitId, disabled: node.getAttribute("aria-disabled") === "true",
+                depth: Number(node.dataset.orbitDepth ?? -1),
+                submenu: node.getAttribute("aria-haspopup") === "menu"})) : []};
+    ''', script_args=[TOOLS_ROOT_ID])
+
+
+def hover_tool(driver, action_id, duration=35):
+    point = driver.execute_script('''
+        const root = document.getElementById(arguments[0]);
+        const node = [...root.querySelectorAll("[data-orbit-id]")].find(item => item.dataset.orbitId === arguments[1]);
+        if (!node || node.getAttribute("aria-disabled") === "true") throw new Error("Missing enabled native tool: " + arguments[1]);
+        return {x: Number(node.dataset.orbitX), y: Number(node.dataset.orbitY)};
+    ''', script_args=[TOOLS_ROOT_ID, action_id])
+    pointer(driver).pointer_move(round(point["x"]), round(point["y"]), duration=duration, origin="viewport").perform()
+    wait_for(driver, '''return [...document.getElementById(arguments[0]).querySelectorAll(".orbit-radial-active")]
+        .some(node => node.dataset.orbitId === arguments[1]);''', "trusted pointer reaches the native tools action",
+             [TOOLS_ROOT_ID, action_id])
+    settle_radial(driver)
+
+
+def activate_tool(driver, action_id):
+    hover_tool(driver, action_id)
+    hover_tool(driver, action_id)
+    pointer(driver).click().perform()
+
+
+def open_tools(driver):
+    move_to_content(driver, click=True)
+    wait_focus_idle(driver)
+    hover_focus_zone(driver, "tools")
+    wait_for(driver, '''const root = document.getElementById(arguments[0]);
+        return root && !root.hidden && root.querySelector("[data-orbit-id]") &&
+            getComputedStyle(root).display !== "none";''', "top-left dwell opens the tools radial", [TOOLS_ROOT_ID])
+    settle_radial(driver)
+    state = focus_state(driver)
+    assert state["toolsOpen"] and not state["addressVisible"] and not state["windowVisible"], state
+    return tools_state(driver)
+
+
+def dismiss_tools(driver):
+    for _ in range(8):
+        if not tools_state(driver)["visible"]:
+            break
+        chord(driver, Keys.ESCAPE)
+    wait_for(driver, '''const root = document.getElementById(arguments[0]);
+        return !root || root.hidden || getComputedStyle(root).display === "none";''',
+             "native tools radial dismisses without exiting focus mode", [TOOLS_ROOT_ID])
+    assert focus_state(driver)["enabled"]
+
+
+def assert_native_popup_anchor(driver, popup_id=None, extension_id=None):
+    assert driver.execute_script('''
+        const panels = [...document.querySelectorAll("panel")].filter(panel => panel.state === "open");
+        const panel = arguments[0] ? document.getElementById(arguments[0]) : panels.find(panel =>
+            [...panel.querySelectorAll("browser")].some(browser =>
+                WebExtensionPolicy.getByURI(browser.currentURI)?.id === arguments[1]));
+        const anchor = panel?.anchorNode || panel?.triggerNode;
+        const rect = anchor?.getBoundingClientRect();
+        const style = anchor && getComputedStyle(anchor);
+        return panel?.state === "open" && !!anchor?.isConnected &&
+            (anchor.classList.contains("orbit-focus-native-anchor") ||
+                !!anchor.closest(".orbit-focus-native-anchor")) &&
+            rect.width > 0 && rect.height > 0 && style.visibility === "visible" &&
+            0 <= rect.x && rect.right <= innerWidth + 1 && 0 <= rect.y && rect.bottom <= innerHeight + 1;
+    ''', script_args=[popup_id, extension_id]), "A native popup must remain anchored to its original, visible Firefox widget inside the window"
+
+
+def install_extension_fixture(driver, folder):
+    """Seed an isolated real extension; all action activation remains trusted input."""
+    path = folder / "focus-fixture.xpi"
+    manifest = {
+        "manifest_version": 2, "name": "Orbit native focus fixture", "version": "1.0",
+        "incognito": "not_allowed",
+        "browser_specific_settings": {"gecko": {"id": EXTENSION_ID}},
+        "browser_action": {"default_title": "Native focus fixture", "default_popup": "popup.html"},
+    }
+    with ZipFile(path, "w") as archive:
+        archive.writestr("manifest.json", json.dumps(manifest))
+        archive.writestr("popup.html", '<!doctype html><meta charset="utf-8"><title>Native extension proof</title>'
+                         '<style>body{font:16px system-ui;padding:18px;min-width:240px}</style>'
+                         '<p id="native-focus-extension-proof">Firefox owns this extension popup.</p>')
+    assert Addons(driver).install(str(path), temp=True) == EXTENSION_ID
+    driver.set_context("chrome")
+    wait_for(driver, 'return !!WebExtensionPolicy.getByID(arguments[0])?.active;',
+             "the real temporary extension policy activates", [EXTENSION_ID])
+
+
+def run_focus_checks(driver, handle, url, result, folder):
+    """Verify separated focus islands against original native Firefox controls."""
+    checks = result["checks"]
+    select_fixture(driver, handle)
+    driver.set_context("chrome")
+    assert focus_state(driver)["addressVisibility"] == "visible"
+    original = driver.execute_script('''
+        window.orbitUXNativeAddress = document.getElementById("urlbar-container");
+        window.orbitUXNativeWindowBoxes = [...document.querySelectorAll(".titlebar-buttonbox-container")]
+            .map(node => ({node, parent: node.parentNode, next: node.nextSibling}));
+        const box = gBrowser.selectedBrowser.getBoundingClientRect();
+        return {contentTop: box.y, contentHeight: box.height};
     ''')
+    install_extension_fixture(driver, folder)
+    chord(driver, Keys.ALT, Keys.SHIFT, "f")
+    wait_for(driver, '''return document.documentElement.getAttribute("data-orbit-focus") === "true" &&
+        !document.getElementById("orbit-focus-chip").hidden;''', "trusted focus shortcut enables a visible escape control")
+    move_to_content(driver, click=True)
+    wait_focus_idle(driver)
+    idle = focus_state(driver)
+    assert_focus_geometry(idle)
+    assert idle["addressVisibility"] == "hidden" and not idle["toolsOpen"], idle
+    assert driver.execute_script('''return document.getElementById("urlbar-container") === window.orbitUXNativeAddress &&
+        window.orbitUXNativeWindowBoxes.every(({node, parent, next}) =>
+            node.isConnected && node.parentNode === parent && node.nextSibling === next);''')
+    content = driver.execute_script('''const box = gBrowser.selectedBrowser.getBoundingClientRect();
+        return {top: box.y, height: box.height};''')
+    assert content["top"] < original["contentTop"] and content["height"] > original["contentHeight"], (original, content)
+    checks.append("Idle focus mode gives real content more space while retaining the original native address and window-control nodes in their original parents")
+
+    compact = hover_focus_zone(driver, "address")
+    assert_focus_geometry(compact)
+    assert compact["addressVisible"] and not compact["addressExpanded"] and not compact["focusedAddress"], compact
+    assert not compact["windowVisible"] and not compact["toolsVisible"], compact
+    left_click(driver, "urlbar-container")
+    wait_for(driver, '''return gURLBar.focused &&
+        document.documentElement.getAttribute("data-orbit-focus-address-expanded") === "true";''',
+             "a trusted click expands and focuses the original native address bar")
+    settle_radial(driver)
+    expanded = focus_state(driver)
+    assert_focus_geometry(expanded, compact)
+    assert not expanded["windowVisible"] and not expanded["toolsVisible"], expanded
+    checks.append("Approaching the top center reveals a compact floating address island; clicking it expands and focuses the original Firefox URL bar independently")
+
+    chord(driver, Keys.CONTROL, "a")
+    address = driver.execute_script("return gURLBar.inputField;")
+    address.send_keys(url + "focus-address-proof")
+    wait_for(driver, '''return gURLBar.view.isOpen && gURLBar.inputField.value === arguments[0];''',
+             "trusted address typing uses Firefox's native autocomplete view", [url + "focus-address-proof"])
+    assert focus_state(driver)["addressExpanded"] and focus_state(driver)["enabled"]
+    assert driver.execute_script('''
+        const view = document.querySelector(".urlbarView");
+        const rect = view.getBoundingClientRect();
+        return !!gURLBar.inputField.closest("toolbar") && view.matches(":popover-open") &&
+            rect.width > 300 && rect.height > 20 && rect.bottom >
+                document.getElementById("urlbar-container").getBoundingClientRect().bottom;
+    '''), "The floating native address must retain its real top-layer suggestions outside the hidden toolbar"
+    chord(driver, Keys.ESCAPE)
+    wait_for(driver, "return !gURLBar.view.isOpen;", "Escape dismisses native address suggestions")
+    assert focus_state(driver)["enabled"], "Closing autocomplete unexpectedly exited focus mode"
+    chord(driver, Keys.CONTROL, "l")
+    wait_for(driver, '''return gURLBar.focused &&
+        document.documentElement.getAttribute("data-orbit-focus-address-expanded") === "true";''',
+             "Ctrl+L expands and selects the native floating URL bar")
+    address = driver.execute_script("return gURLBar.inputField;")
+    address.send_keys(url + "focus-address-proof")
+    wait_for(driver, 'return gURLBar.view.isOpen && document.querySelector(".urlbarView-row");',
+             "native autocomplete repaints its visit suggestion")
+    point = driver.execute_script('''
+        const row = [...document.querySelectorAll(".urlbarView-row")].find(row => !row.hidden);
+        const box = row.getBoundingClientRect();
+        if (!box.width || !box.height) throw new Error("Native URL suggestion is not rendered");
+        return {x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2)};
+    ''')
+    pointer(driver).pointer_move(point["x"], point["y"], duration=35, origin="viewport").click().perform()
+    wait_for(driver, 'return gBrowser.selectedBrowser.currentURI.spec === arguments[0];',
+             "a trusted suggestion click navigates the actual Gecko browser from the native address island", [url + "focus-address-proof"])
+    driver.set_context("content")
+    wait_for(driver, 'return document.title === "Orbit radial focus-address-proof" && !!document.getElementById("fixture-proof");',
+             "the typed real HTTP document renders")
+    move_to_content(driver, click=True)
+    wait_focus_idle(driver)
+    checks.append("The expanded address island keeps real top-layer Firefox autocomplete, Escape-to-dismiss, Ctrl+L selection, and trusted suggestion navigation without leaving focus mode")
+
+    for label, values in (("Alt+D", (Keys.ALT, "d")),
+                          ("Ctrl+K", (Keys.CONTROL, "k")), ("F6", (Keys.F6,))):
+        chord(driver, *values)
+        wait_for(driver, '''return gURLBar.focused &&
+            document.documentElement.getAttribute("data-orbit-focus-address-expanded") === "true";''',
+                 f"{label} keeps its real native address/search focus in the floating island")
+        assert focus_state(driver)["enabled"]
+        move_to_content(driver, click=True)
+        wait_focus_idle(driver)
+    checks.append("Native Alt+D, Ctrl+K search, and F6 focus traversal reveal and focus the original address field without exposing the other islands")
+
+    driver.execute_script('''
+        window.orbitUXCustomizableUI = ChromeUtils.importESModule(
+            "moz-src:///browser/components/customizableui/CustomizableUI.sys.mjs").CustomizableUI;
+        if (window.orbitUXCustomizableUI.getPlacementOfWidget("search-container"))
+            throw new Error("The disposable profile unexpectedly starts with a custom search widget");
+        window.orbitUXCustomizableUI.addWidgetToArea("search-container", window.orbitUXCustomizableUI.AREA_NAVBAR);
+    ''')
+    try:
+        wait_for(driver, 'return !!document.getElementById("searchbar");', "Firefox creates its actual customized search widget")
+        chord(driver, Keys.CONTROL, "k")
+        wait_for(driver, '''const search = document.getElementById("searchbar");
+            return search?.contains(document.activeElement) &&
+                document.documentElement.getAttribute("data-orbit-focus-reveal") === "true" &&
+                getComputedStyle(search).visibility === "visible";''',
+                 "Ctrl+K reveals and focuses Firefox's real custom search widget")
+        assert focus_state(driver)["enabled"]
+        move_to_content(driver, click=True)
+        wait_for(driver, 'return !document.documentElement.hasAttribute("data-orbit-focus-reveal");',
+                 "the full native strip recedes again after custom search loses focus")
+        wait_focus_idle(driver)
+        assert focus_state(driver)["tabVisibility"] == "hidden"
+    finally:
+        driver.set_context("chrome")
+        driver.execute_script('window.orbitUXCustomizableUI.removeWidgetFromArea("search-container");')
+    checks.append("A genuinely customized native search widget retains Ctrl+K focus through a temporary toolbar reveal, which recedes again when focus returns to the webpage")
+
+    previous = set(driver.window_handles)
+    chord(driver, Keys.CONTROL, "t")
+    canvas = new_handle(driver, previous, "Focus-mode native New Tab shortcut")
+    native_canvas_ready(driver)
+    wait_for(driver, '''return gURLBar.focused && !gURLBar.value &&
+        document.documentElement.getAttribute("data-orbit-focus-address-expanded") === "true";''',
+             "Ctrl+T retains the empty native address focus above a new real canvas tab")
+    assert focus_state(driver)["enabled"]
+    driver.switch_to_window(canvas, focus=False)
+    chord(driver, Keys.CONTROL, "w")
+    select_fixture(driver, handle)
+    driver.set_context("chrome")
+    move_to_content(driver, click=True)
+    wait_focus_idle(driver)
+    checks.append("Native Ctrl+T opens a real canvas tab with an expanded empty address island, and Ctrl+W restores the website without exiting focus mode")
+
+    controls = hover_focus_zone(driver, "window")
+    assert_focus_geometry(controls)
+    assert controls["windowVisible"] and not controls["addressVisible"] and not controls["toolsVisible"], controls
+    assert driver.execute_script('''
+        return [...document.querySelectorAll('[data-orbit-focus-window-controls="true"]')]
+            .every(node => window.orbitUXNativeWindowBoxes.some(entry => entry.node === node));
+    '''), "The window island must expose original OS controls rather than cloned buttons"
+    move_to_content(driver)
+    wait_focus_idle(driver)
+    checks.append("Approaching the top right independently reveals rounded original minimize, maximize, and close controls; leaving the island hides them")
+
+    state = open_tools(driver)
+    assert state["mode"] == "focus-tools" and state["items"], state
+    # A continuous diagonal approach must survive longer than the conceal
+    # timer while crossing decorative gaps in the native circular menu.
+    hover_tool(driver, "orbit-focus-settings", duration=850)
+    wait_for(driver, '''return [...document.getElementById(arguments[0]).querySelectorAll("[data-orbit-id]")]
+        .some(node => node.dataset.orbitId === "orbit-focus-preferences");''',
+             "the settings branch opens a locally anchored tools fan", [TOOLS_ROOT_ID])
+    settle_radial(driver)
+    assert driver.execute_script('''const root = document.getElementById(arguments[0]);
+        return [...root.querySelectorAll(".orbit-radial-ring")].some(ring =>
+            Number(ring.dataset.orbitDepth) > 0 && ring.classList.contains("orbit-radial-fan") &&
+            Number(ring.dataset.orbitSpan) < Math.PI * 2 - .01);''', script_args=[TOOLS_ROOT_ID])
+    dismiss_tools(driver)
+    move_to_content(driver)
+    wait_focus_idle(driver)
+    checks.append("Top-left dwell opens a separate circular tools radial, a slow continuous corner-to-menu approach remains usable, settings fan from their parent, and Escape preserves focus mode")
+
+    open_tools(driver)
+    activate_tool(driver, "orbit-focus-downloads")
+    wait_for(driver, 'return document.getElementById("downloadsPanel")?.state === "open";',
+             "the radial downloads action opens the original native downloads panel")
+    assert_native_popup_anchor(driver, "downloadsPanel")
+    assert focus_state(driver)["enabled"] and not tools_state(driver)["visible"]
+    chord(driver, Keys.ESCAPE)
+    wait_for(driver, 'return document.getElementById("downloadsPanel")?.state === "closed";',
+             "Escape closes the native downloads panel")
+    assert focus_state(driver)["enabled"]
+    checks.append("The tools Downloads leaf opens Firefox's original panel, and native popup dismissal preserves focus mode")
+
+    open_tools(driver)
+    hover_tool(driver, "orbit-focus-settings")
+    previous = set(driver.window_handles)
+    activate_tool(driver, "orbit-focus-preferences")
+    preferences = new_handle(driver, previous, "Native settings radial action")
+    driver.switch_to_window(preferences)
+    driver.set_context("chrome")
+    wait_for(driver, 'return gBrowser.selectedBrowser.currentURI.spec.startsWith("about:preferences");',
+             "the tools Settings leaf opens Firefox's real preferences tab")
+    assert focus_state(driver)["enabled"]
+    chord(driver, Keys.CONTROL, "w")
+    driver.switch_to_window(handle)
+    driver.set_context("chrome")
+    checks.append("The tools Settings leaf opens the real native preferences tab, and closing that tab restores the website in focus mode")
+
+    open_tools(driver)
+    hover_tool(driver, "orbit-focus-extensions")
+    activate_tool(driver, "orbit-focus-extensions-panel")
+    wait_for(driver, 'return document.getElementById("unified-extensions-panel")?.state === "open";',
+             "the tools Extensions panel leaf opens Firefox's original extension-management popup")
+    assert_native_popup_anchor(driver, "unified-extensions-panel")
+    wait_for(driver, '''return [...document.querySelectorAll("unified-extensions-item")]
+        .some(node => node.getAttribute("extension-id") === arguments[0]);''',
+             "the native extension panel contains the actual temporary extension", [EXTENSION_ID])
+    assert focus_state(driver)["enabled"]
+    chord(driver, Keys.ESCAPE)
+    wait_for(driver, 'return document.getElementById("unified-extensions-panel")?.state === "closed";',
+             "Escape closes the native extensions panel")
+    assert focus_state(driver)["enabled"]
+    open_tools(driver)
+    hover_tool(driver, "orbit-focus-extensions")
+    activate_tool(driver, f"orbit-focus-extension:{EXTENSION_ID}")
+    wait_for(driver, '''
+        return [...document.querySelectorAll("panel")].filter(panel => panel.state === "open")
+            .flatMap(panel => [...panel.querySelectorAll("browser")]).some(browser =>
+            browser.currentURI?.spec.endsWith("/popup.html") &&
+            WebExtensionPolicy.getByURI(browser.currentURI)?.id === arguments[0]);
+    ''', "the radial browser action opens its actual Firefox-owned extension popup", [EXTENSION_ID])
+    assert_native_popup_anchor(driver, extension_id=EXTENSION_ID)
+    assert focus_state(driver)["enabled"] and not tools_state(driver)["visible"]
+    chord(driver, Keys.ESCAPE)
+    wait_for(driver, '''return ![...document.querySelectorAll("panel")].filter(panel => panel.state === "open")
+        .flatMap(panel => [...panel.querySelectorAll("browser")]).some(browser =>
+        WebExtensionPolicy.getByURI(browser.currentURI)?.id === arguments[0]);''',
+             "native extension popup dismissal removes its remote popup browser", [EXTENSION_ID])
+    assert focus_state(driver)["enabled"]
+    checks.append("The tools extension fan preserves Firefox's original extension panel and activates a real installed extension's original browser action and isolated popup")
+
+    move_to_content(driver, click=True)
+    wait_focus_idle(driver)
+    driver.set_window_rect(width=900, height=760)
+    settle_radial(driver)
+    compact_narrow = hover_focus_zone(driver, "address")
+    assert_focus_geometry(compact_narrow)
+    left_click(driver, "urlbar-container")
+    settle_radial(driver)
+    assert_focus_geometry(focus_state(driver), compact_narrow)
+    move_to_content(driver, click=True)
+    wait_focus_idle(driver)
+    assert_focus_geometry(hover_focus_zone(driver, "window"))
+    move_to_content(driver)
+    wait_focus_idle(driver)
+    open_tools(driver)
+    dismiss_tools(driver)
+    driver.maximize_window()
+    settle_radial(driver)
+    assert_focus_geometry(hover_focus_zone(driver, "window"))
+    move_to_content(driver)
+    wait_focus_idle(driver)
+    assert_focus_geometry(hover_focus_zone(driver, "address"))
+    driver.set_window_rect(width=1400, height=1000)
+    move_to_content(driver, click=True)
+    wait_focus_idle(driver)
+    checks.append("Compact and expanded native address islands, corner controls, and tools remain inside the viewport after resizing, maximizing, and restoring the window")
+
+    chord(driver, Keys.ESCAPE)
+    wait_for(driver, 'return !document.documentElement.hasAttribute("data-orbit-focus");', "Escape exits idle focus mode")
+    assert not focus_state(driver)["chipVisible"] and focus_state(driver)["addressVisibility"] == "visible"
+    assert driver.execute_script('''return document.getElementById("urlbar-container") === window.orbitUXNativeAddress &&
+        window.orbitUXNativeWindowBoxes.every(({node, parent, next}) =>
+            node.isConnected && node.parentNode === parent && node.nextSibling === next) &&
+        !document.querySelector('[data-orbit-focus-address], [data-orbit-focus-window-controls]');''')
+    checks.append("Escape from idle focus restores the ordinary browser layout and removes every native-control focus marker")
+
+    chord(driver, Keys.ALT, Keys.SHIFT, "f")
+    move_to_content(driver, click=True)
+    wait_focus_idle(driver)
+    left_click(driver, "orbit-focus-reveal")
+    wait_for(driver, '''return gURLBar.focused &&
+        document.documentElement.getAttribute("data-orbit-focus-address-expanded") === "true";''',
+             "the visible focus chip expands the address island")
+    left_click(driver, "orbit-focus-exit")
+    wait_for(driver, 'return !document.documentElement.hasAttribute("data-orbit-focus");', "focus chip exits focus mode")
+    checks.append("The visible Address bar and Exit focus chip buttons remain physically reachable and restore native browser focus")
+
+    # Preserve Firefox's alternative tab layout and the row that owns OS buttons.
+    driver.execute_script('Services.prefs.setBoolPref("sidebar.verticalTabs", true);')
+    wait_for(driver, 'return document.getElementById("sidebar-container")?.contains(document.getElementById("tabbrowser-tabs"));',
+             "Firefox moves its real tab strip into the native vertical-tabs sidebar")
+    sidebar_width = driver.execute_script('return document.getElementById("sidebar-container").getBoundingClientRect().width;')
+    chord(driver, Keys.ALT, Keys.SHIFT, "f")
+    move_to_content(driver, click=True)
+    wait_focus_idle(driver)
+    assert driver.execute_script('return document.getElementById("sidebar-container").getBoundingClientRect().width < 1;')
+    assert_focus_geometry(hover_focus_zone(driver, "window"))
+    move_to_content(driver)
+    wait_focus_idle(driver)
+    assert_focus_geometry(hover_focus_zone(driver, "address"))
+    left_click(driver, "orbit-focus-exit")
+    wait_for(driver, 'return !document.documentElement.hasAttribute("data-orbit-focus");', "focus exit restores vertical tabs")
+    assert driver.execute_script('return document.getElementById("sidebar-container").getBoundingClientRect().width;') >= sidebar_width - 1
+    driver.execute_script('Services.prefs.clearUserPref("sidebar.verticalTabs");')
+    wait_for(driver, 'return !document.getElementById("sidebar-container")?.contains(document.getElementById("tabbrowser-tabs"));',
+             "the original horizontal native tab layout returns")
+    checks.append("Focus hides the actual vertical tab strip, reveals OS controls from their native navigation-row owner, and restores the original sidebar width on exit")
+
+    driver.set_context("content")
+    driver.navigate(url)
+    wait_for(driver, 'return !!document.getElementById("fixture-proof");', "the original capture fixture returns after address navigation")
+    driver.set_context("chrome")
 
 
 def force_default_theme(driver, dark):
@@ -252,34 +730,7 @@ def run_checks(driver, handle, url, result, folder):
     driver.switch_to_window(canvas, focus=False)
     checks.append("The New tab command opens a real canvas tab with an empty, focused native address bar")
 
-    select_fixture(driver, handle)
-    driver.set_context("chrome")
-    assert focus_state(driver)["addressVisibility"] == "visible"
-    chord(driver, Keys.ALT, Keys.SHIFT, "f")
-    wait_for(driver, '''return document.documentElement.getAttribute("data-orbit-focus") === "true" &&
-        !document.getElementById("orbit-focus-chip").hidden;''', "trusted focus shortcut enables a visible escape control")
-    settle_radial(driver)
-    hidden = focus_state(driver)
-    assert hidden["enabled"] and hidden["chipVisible"] and not hidden["revealed"], hidden
-    assert hidden["addressVisibility"] == "hidden" and hidden["tabVisibility"] == "hidden", hidden
-    chord(driver, Keys.CONTROL, "l")
-    wait_for(driver, '''return gURLBar.focused && document.documentElement.getAttribute("data-orbit-focus-reveal") === "true";''',
-             "Ctrl+L reveals the real native address bar in focus mode")
-    chord(driver, Keys.ESCAPE)
-    wait_for(driver, 'return !document.documentElement.hasAttribute("data-orbit-focus");', "Escape exits focus mode")
-    assert not focus_state(driver)["chipVisible"]
-    checks.append("Focus mode recedes real browser controls, Ctrl+L reveals them, and Escape restores the toolbar")
-
-    select_fixture(driver, handle)
-    driver.set_context("chrome")
-    chord(driver, Keys.ALT, Keys.SHIFT, "f")
-    settle_radial(driver)
-    left_click(driver, "orbit-focus-reveal")
-    wait_for(driver, '''return gURLBar.focused && document.documentElement.getAttribute("data-orbit-focus-reveal") === "true";''',
-             "the visible focus chip reveals browser controls")
-    left_click(driver, "orbit-focus-exit")
-    wait_for(driver, 'return !document.documentElement.hasAttribute("data-orbit-focus");', "focus chip exits focus mode")
-    checks.append("Focus mode's visible Show controls and Exit focus buttons remain physically reachable")
+    run_focus_checks(driver, handle, url, result, folder)
 
     count = len(board(driver)["items"])
     tab_count = driver.execute_script("return gBrowser.tabs.length;")
@@ -344,9 +795,35 @@ def run_checks(driver, handle, url, result, folder):
         select_fixture(driver, handle)
         driver.set_context("chrome")
         chord(driver, Keys.ALT, Keys.SHIFT, "f")
+        move_to_content(driver, click=True)
+        wait_focus_idle(driver)
+        color = "dark" if dark else "light"
+        screenshot(driver, folder, f"ux-focus-{color}", result)
+        compact = hover_focus_zone(driver, "address")
+        assert_focus_geometry(compact)
+        assert not compact["addressExpanded"] and not compact["focusedAddress"], compact
+        screenshot(driver, folder, f"ux-focus-address-compact-{color}", result)
+        left_click(driver, "urlbar-container")
+        wait_for(driver, '''return gURLBar.focused &&
+            document.documentElement.getAttribute("data-orbit-focus-address-expanded") === "true";''',
+                 "native address expands before visual signoff")
         settle_radial(driver)
-        screenshot(driver, folder, f'ux-focus-{ "dark" if dark else "light" }', result)
-        chord(driver, Keys.ESCAPE)
+        assert_focus_geometry(focus_state(driver), compact)
+        screenshot(driver, folder, f"ux-focus-address-expanded-{color}", result)
+        move_to_content(driver, click=True)
+        wait_focus_idle(driver)
+        assert_focus_geometry(hover_focus_zone(driver, "window"))
+        screenshot(driver, folder, f"ux-focus-window-{color}", result)
+        move_to_content(driver)
+        wait_focus_idle(driver)
+        open_tools(driver)
+        hover_tool(driver, "orbit-focus-extensions")
+        wait_for(driver, '''return [...document.getElementById(arguments[0]).querySelectorAll("[data-orbit-id]")]
+            .some(node => node.dataset.orbitId === arguments[1]);''', "the actual extension browser action paints in its native tools fan",
+                 [TOOLS_ROOT_ID, f"orbit-focus-extension:{EXTENSION_ID}"])
+        screenshot(driver, folder, f"ux-focus-tools-{color}", result)
+        dismiss_tools(driver)
+        left_click(driver, "orbit-focus-exit")
     checks.append("Native webpage radial menus use circular canvas-style controls, and capture, commands, and focus render in default dark and light Orbit colors")
 
     public_before = board(driver)
@@ -358,6 +835,13 @@ def run_checks(driver, handle, url, result, folder):
     wait_for(driver, '''return !!window.gBrowserInit?.delayedStartupFinished && !!window.OrbitChrome &&
         !!document.getElementById("orbit-command-palette");''', "private native window registers Orbit interactions")
     initialize_bridge(driver)
+    chord(driver, Keys.ALT, Keys.SHIFT, "f")
+    state = open_tools(driver)
+    hover_tool(driver, "orbit-focus-extensions")
+    assert not any(item["id"] == f"orbit-focus-extension:{EXTENSION_ID}" for item in tools_state(driver)["items"]), state
+    dismiss_tools(driver)
+    left_click(driver, "orbit-focus-exit")
+    checks.append("The focus tools extension fan preserves the real extension's private-window permission and excludes a not-allowed browser action")
     open_palette(driver)
     state = search(driver, "orbital reading room")
     assert not state["rows"] and state["empty"], state
@@ -383,6 +867,7 @@ def run_checks(driver, handle, url, result, folder):
     driver.switch_to_window(handle)
     driver.set_context("chrome")
     assert board(driver) == public_before, "Private capture leaked into the normal canvas"
+    Addons(driver).uninstall(EXTENSION_ID)
     checks.append("Private command search excludes normal frames and private capture stays in that window's memory without SessionStore or normal-board writes")
 
 

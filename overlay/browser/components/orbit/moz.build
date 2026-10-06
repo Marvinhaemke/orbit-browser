@@ -4,6 +4,7 @@
 
 MOZ_SRC_FILES += [
     "Orbit.sys.mjs",
+    "OrbitFocusTools.sys.mjs",
     "OrbitInteractions.sys.mjs",
     "OrbitRadial.sys.mjs",
     "OrbitRadialChild.sys.mjs",

@@ -65,6 +65,7 @@ def verify_native_package(package: Path) -> None:
     required_resources = (
         "browser/components/orbit/Orbit.sys.mjs",
         "browser/components/orbit/OrbitInteractions.sys.mjs",
+        "browser/components/orbit/OrbitFocusTools.sys.mjs",
         "browser/components/orbit/OrbitRadial.sys.mjs",
         "browser/components/orbit/OrbitRadialView.sys.mjs",
         "browser/components/orbit/OrbitRadialChild.sys.mjs",
@@ -120,6 +121,8 @@ def main() -> None:
         "The launcher uses a separate profile stored in this folder.\n"
         "New tabs open the Orbit canvas. Use the Orbit toolbar button or Alt+Shift+O on any page.\n"
         "Ctrl+Shift+Space opens Orbit commands. Alt+Shift+F toggles focus mode.\n"
+        "In focus mode: top middle reveals the address island; top left opens tools; top right reveals window controls.\n"
+        "Click the address island or use Ctrl+L to expand it. Exit focus restores the full interface.\n"
         "Use Send to canvas in a page's radial menu to collect links and selected text.\n"
         "orbit.exe runs Gecko with Orbit's rebuilt native browser interface.\n"
         "To test the latest interface: close Orbit, then run Update-Orbit.cmd.\n"
