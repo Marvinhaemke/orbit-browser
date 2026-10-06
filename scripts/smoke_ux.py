@@ -152,6 +152,141 @@ def focus_state(driver):
     ''', script_args=[TOOLS_ROOT_ID])
 
 
+def record_focus_probe(driver, result, label):
+    """Record native hit testing and trusted event delivery without changing UI."""
+    driver.set_context("chrome")
+    probe = driver.execute_script('''
+        const describe = node => ({tag: node?.localName, id: node?.id,
+            classes: typeof node?.className === "string" ? node.className : node?.getAttribute?.("class")});
+        const geometry = node => {
+            const rect = node?.getBoundingClientRect();
+            const style = node && getComputedStyle(node);
+            return {...describe(node), x: rect?.x, y: rect?.y, width: rect?.width, height: rect?.height,
+                right: rect?.right, bottom: rect?.bottom, display: style?.display,
+                visibility: style?.visibility, opacity: style?.opacity, pointerEvents: style?.pointerEvents,
+                overflow: style?.overflow, overflowX: style?.overflowX, overflowY: style?.overflowY,
+                position: style?.position, contain: style?.contain, zIndex: style?.zIndex,
+                minHeight: style?.minHeight, maxHeight: style?.maxHeight,
+                dragging: style?.getPropertyValue("-moz-window-dragging")};
+        };
+        const address = document.getElementById("urlbar-container");
+        const input = gURLBar.inputField;
+        const ancestors = [];
+        for (let node = address; node; node = node.parentElement) ancestors.push(geometry(node));
+        const hit = node => {
+            const rect = node.getBoundingClientRect();
+            const x = Math.round(rect.x + rect.width / 2), y = Math.round(rect.y + rect.height / 2);
+            return {point: {x, y}, top: describe(document.elementFromPoint(x, y)),
+                stack: document.elementsFromPoint(x, y).map(describe)};
+        };
+        return {address: hit(address), input: {...geometry(input), ...hit(input)}, ancestors,
+            active: geometry(document.activeElement),
+            focusedElement: describe(Services.focus.focusedElement),
+            rootAttributes: Object.fromEntries([...document.documentElement.attributes]
+                .filter(attribute => attribute.name.startsWith("data-orbit-focus"))
+                .map(attribute => [attribute.name, attribute.value])),
+            trustedEvents: window.orbitUXFocusEvents?.slice(-80)};
+    ''')
+    probe["state"] = focus_state(driver)
+    try:
+        driver.set_context("content")
+        probe["contentEvents"] = driver.execute_script("return window.orbitSmokeInputEvents || [];")
+    finally:
+        driver.set_context("chrome")
+    result.setdefault("focus_probes", {})[label] = probe
+
+
+def diagnose_focus_hit_testing(driver, result, folder):
+    """After a failed real click, isolate CSS causes in the disposable profile.
+
+    These transient styles never participate in a passing test. The caller
+    preserves and re-raises the original failure regardless of probe results.
+    """
+    driver.set_context("chrome")
+    if not focus_state(driver)["enabled"]:
+        return
+    scope = ':root[data-orbit-focus="true"]:not([data-orbit-focus-reveal="true"])'
+    variants = {
+        "a-pointer-auto": f'''{scope} #navigator-toolbox,
+            {scope} #navigator-toolbox [data-orbit-focus-island-parent="true"] {{
+                pointer-events: auto !important;
+            }}''',
+        "b-positive-marked-ancestors": f'''{scope} #navigator-toolbox[data-orbit-focus-island-parent="true"],
+            {scope} #navigator-toolbox [data-orbit-focus-island-parent="true"] {{
+                height: 64px !important; min-height: 64px !important; max-height: 64px !important;
+                margin-block: 0 !important; padding-block: 0 !important;
+            }}
+            {scope} #navigator-toolbox > :is(toolbar, #titlebar):not([data-orbit-focus-island-parent="true"]),
+            {scope} #TabsToolbar:not([data-orbit-focus-island-parent="true"]) {{
+                height: 0 !important; min-height: 0 !important; max-height: 0 !important;
+                margin-block: 0 !important; padding-block: 0 !important;
+            }}''',
+        "c-positive-overlay-ancestors": f'''{scope} #navigator-toolbox,
+            {scope} #navigator-toolbox :is(toolbar, #titlebar),
+            {scope} #navigator-toolbox [data-orbit-focus-island-parent="true"] {{
+                height: 64px !important; min-height: 64px !important; max-height: 64px !important;
+                margin: 0 !important; padding-block: 0 !important;
+            }}
+            {scope} #navigator-toolbox :is(toolbar, #titlebar) {{
+                position: absolute !important; top: 0 !important; left: 0 !important; right: 0 !important;
+            }}''',
+    }
+
+    def reset_editing():
+        driver.set_context("chrome")
+        editing = driver.execute_script('''return gURLBar.view.isOpen ||
+            document.getElementById("urlbar-container").contains(document.activeElement);''')
+        if editing:
+            chord(driver, Keys.ESCAPE)
+            settle_radial(driver)
+        move_to_content(driver, click=True)
+        wait_focus_idle(driver)
+
+    try:
+        for name, css in variants.items():
+            entry = result.setdefault("focus_style_probes", {}).setdefault(name, {})
+            try:
+                reset_editing()
+                driver.execute_script('''
+                    document.getElementById("orbit-smoke-native-hit-probe")?.remove();
+                    const sheet = document.createElementNS("http://www.w3.org/1999/xhtml", "style");
+                    sheet.id = "orbit-smoke-native-hit-probe";
+                    sheet.textContent = arguments[0];
+                    document.documentElement.append(sheet);
+                ''', script_args=[css])
+                for target in ("container", "input", "padding"):
+                    reset_editing()
+                    hover_focus_zone(driver, "address")
+                    label = f"style-{name}-{target}"
+                    record_focus_probe(driver, result, label + "-before")
+                    point = driver.execute_script('''
+                        const container = document.getElementById("urlbar-container");
+                        const node = arguments[0] === "input" ? gURLBar.inputField : container;
+                        const box = node.getBoundingClientRect();
+                        return {x: Math.round(box.x + (arguments[0] === "padding" ? 8 : box.width / 2)),
+                            y: Math.round(box.y + box.height / 2), width: box.width, height: box.height};
+                    ''', script_args=[target])
+                    entry[target] = {"point": point}
+                    pointer(driver).pointer_move(point["x"], point["y"], duration=35, origin="viewport").click().perform()
+                    settle_radial(driver)
+                    record_focus_probe(driver, result, label + "-after")
+                    entry[target]["state"] = focus_state(driver)
+                    screenshot(driver, folder, f"ux-focus-probe-{name}-{target}", result)
+            except Exception:
+                entry["error"] = traceback.format_exc()
+                record_focus_probe(driver, result, f"style-{name}-failure")
+            finally:
+                try:
+                    reset_editing()
+                except Exception:
+                    entry["cleanup_error"] = traceback.format_exc()
+                finally:
+                    driver.execute_script('document.getElementById("orbit-smoke-native-hit-probe")?.remove();')
+    finally:
+        driver.execute_script('document.getElementById("orbit-smoke-native-hit-probe")?.remove();')
+        result["diagnostic_styles_removed"] = driver.execute_script('return !document.getElementById("orbit-smoke-native-hit-probe");')
+
+
 def hover_focus_zone(driver, zone):
     """Move from real content into the native chrome's independently owned hotzone."""
     driver.set_context("chrome")
@@ -319,6 +454,21 @@ def run_focus_checks(driver, handle, url, result, folder):
         return {contentTop: box.y, contentHeight: box.height};
     ''')
     install_extension_fixture(driver, folder)
+    driver.execute_script('''
+        window.orbitUXFocusEvents = [];
+        const describe = node => ({tag: node?.localName, id: node?.id});
+        for (const type of ["pointerdown", "pointerup", "mousedown", "mouseup", "click", "focus", "focusin", "blur", "focusout"]) {
+            window.addEventListener(type, event => {
+                if (!document.documentElement.hasAttribute("data-orbit-focus")) return;
+                window.orbitUXFocusEvents.push({type, trusted: event.isTrusted, time: performance.now(),
+                    target: describe(event.target), path: event.composedPath().map(describe),
+                    clientX: event.clientX, clientY: event.clientY,
+                    screenX: event.screenX, screenY: event.screenY,
+                    button: event.button, buttons: event.buttons, active: describe(document.activeElement)});
+                if (window.orbitUXFocusEvents.length > 100) window.orbitUXFocusEvents.shift();
+            }, true);
+        }
+    ''')
     chord(driver, Keys.ALT, Keys.SHIFT, "f")
     wait_for(driver, '''return document.documentElement.getAttribute("data-orbit-focus") === "true" &&
         !document.getElementById("orbit-focus-chip").hidden;''', "trusted focus shortcut enables a visible escape control")
@@ -333,18 +483,25 @@ def run_focus_checks(driver, handle, url, result, folder):
     content = driver.execute_script('''const box = gBrowser.selectedBrowser.getBoundingClientRect();
         return {top: box.y, height: box.height};''')
     assert content["top"] < original["contentTop"] and content["height"] > original["contentHeight"], (original, content)
+    record_focus_probe(driver, result, "initial-idle")
+    screenshot(driver, folder, "ux-focus-initial-idle", result)
     checks.append("Idle focus mode gives real content more space while retaining the original native address and window-control nodes in their original parents")
 
     compact = hover_focus_zone(driver, "address")
     assert_focus_geometry(compact)
     assert compact["addressVisible"] and not compact["addressExpanded"] and not compact["focusedAddress"], compact
     assert not compact["windowVisible"] and not compact["toolsVisible"], compact
+    record_focus_probe(driver, result, "compact-before-click")
+    screenshot(driver, folder, "ux-focus-initial-address-compact", result)
     left_click(driver, "urlbar-container")
+    record_focus_probe(driver, result, "compact-after-click")
     wait_for(driver, '''return gURLBar.focused &&
         document.documentElement.getAttribute("data-orbit-focus-address-expanded") === "true";''',
              "a trusted click expands and focuses the original native address bar")
     settle_radial(driver)
     expanded = focus_state(driver)
+    record_focus_probe(driver, result, "expanded-after-click")
+    screenshot(driver, folder, "ux-focus-initial-address-expanded", result)
     assert_focus_geometry(expanded, compact)
     assert not expanded["windowVisible"] and not expanded["toolsVisible"], expanded
     checks.append("Approaching the top center reveals a compact floating address island; clicking it expands and focuses the original Firefox URL bar independently")
@@ -916,9 +1073,12 @@ def main():
                 driver.set_context("chrome")
                 result["failure_palette"] = palette_state(driver)
                 result["failure_focus"] = focus_state(driver)
+                record_focus_probe(driver, result, "failure")
                 result["failure_radial"] = radial_state(driver)
                 result["failure_board"] = board(driver)
                 screenshot(driver, report.parent, "ux-failure", result)
+                if "a trusted click expands and focuses the original native address bar" in result["error"]:
+                    diagnose_focus_hit_testing(driver, result, report.parent)
             except Exception:
                 result["capture_error"] = traceback.format_exc()
         raise
