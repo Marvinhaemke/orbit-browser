@@ -21,7 +21,15 @@ const windows = new WeakMap();
 const tabs = new WeakMap();
 const browserWindows = new Set();
 let widgetProperties;
+const topSiteCalls = [];
+const blocked = [];
+let topSiteLinks = [];
+const prefValues = new Map();
 const modules = {
+  NewTabUtils: { activityStreamLinks: {
+    async getTopSites(options) { topSiteCalls.push(options); return topSiteLinks; },
+    blockURL(link) { blocked.push(link); },
+  } },
   AboutNewTab: { newTabURL: "about:newtab" },
   OrbitInteractions: { init() {}, uninit() {} },
   OrbitRadial: { init() {}, uninit() {} },
@@ -55,7 +63,10 @@ globalThis.Services = {
   io: { newURI: uri },
   uuid: { generateUUID: () => `{00000000-0000-0000-0000-${String(++serial).padStart(12, "0")}}` },
   scriptSecurityManager: { createNullPrincipal: attrs => ({ isSystemPrincipal: false, originAttributes: attrs }) },
-  prefs: { getBoolPref: () => true },
+  prefs: {
+    getBoolPref: (name, fallback) => prefValues.has(name) ? prefValues.get(name) : true,
+    setBoolPref: (name, value) => prefValues.set(name, value),
+  },
 };
 globalThis.Ci = { nsIReferrerInfo: { EMPTY: 0 }, nsIWebProgress: { NOTIFY_LOCATION: 16 } };
 globalThis.Cc = {
@@ -145,7 +156,7 @@ function createWindow(isPrivate = false) {
       return browser;
     },
   };
-  win.gURLBar = { focused: false, select() { this.focused = true; } };
+  win.gURLBar = { focused: false, select() { this.focused = true; }, search(value) { this.searched = value; this.focused = true; } };
   return win;
 }
 
@@ -168,7 +179,7 @@ function createCanvasTab(win) {
 }
 
 const source = await readFile(new URL("../overlay/browser/components/orbit/Orbit.sys.mjs", import.meta.url), "utf8");
-const { Orbit } = await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`);
+const { Orbit, shortcutRecords } = await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`);
 const board = () => ({
   version: 1,
   camera: { x: 0, y: 0, zoom: 1 },
@@ -564,5 +575,95 @@ test("real peek uses native remote browser and disposes listeners on close", () 
   assert.equal(preview.stopped, true);
   assert.equal(preview.destroyed, true);
   assert.equal(preview.progress, null);
+  Orbit.uninit(win);
+});
+
+test("new-tab shortcuts expose only web sites, plain titles and local raster favicons", async () => {
+  const win = createWindow();
+  const { canvas } = createCanvasTab(win);
+  const bridge = Orbit.connectCanvas(canvas);
+  topSiteLinks = [
+    { url: "https://github.com/", title: "GitHub", favicon: "data:image/png;base64,iVBORw0KGgo=" },
+    { url: "javascript:alert(1)", title: "Script" },
+    { url: "file:///etc/passwd", title: "Local file" },
+    { url: "https://user:secret@example.net/", title: "Credentials" },
+    { url: "chrome://browser/content/orbit/orbit.html", title: "Canvas" },
+    { url: "http://www.example.com/", title: "  ", smallFavicon: "data:image/svg+xml;base64,PHN2Zz4=" },
+    { url: "https://github.com/", title: "Duplicate" },
+    { url: "https://ico.example/", title: "ICO", favicon: "data:image/x-icon;base64,AAABAAEA" },
+  ];
+  assert.deepEqual(await bridge.topSites(), [
+    { url: "https://github.com/", title: "GitHub", host: "github.com", favicon: "data:image/png;base64,iVBORw0KGgo=" },
+    { url: "http://www.example.com/", title: "example.com", host: "example.com" },
+    { url: "https://ico.example/", title: "ICO", host: "ico.example", favicon: "data:image/x-icon;base64,AAABAAEA" },
+  ]);
+  assert.deepEqual(topSiteCalls.at(-1), { numItems: 8, onePerDomain: true, includeFavicon: true });
+  assert.equal(shortcutRecords(Array.from({ length: 20 }, (_, index) => ({ url: `https://site${index}.example/` }))).length, 8);
+
+  assert.equal(bridge.hideShortcut("https://github.com/"), true);
+  assert.deepEqual(blocked.at(-1), { url: "https://github.com/" }, "Firefox's own top-site block list hides it");
+  assert.throws(() => bridge.hideShortcut("javascript:alert(1)"), /HTTP or HTTPS/);
+
+  const calls = topSiteCalls.length;
+  assert.deepEqual(bridge.setShortcutsVisible(false), { shortcuts: false, privateWindow: false });
+  assert.deepEqual(await bridge.topSites(), []);
+  assert.equal(topSiteCalls.length, calls, "a hidden shortcuts row never queries history");
+  assert.throws(() => bridge.setShortcutsVisible("no"), /boolean/);
+  bridge.setShortcutsVisible(true);
+  assert.equal(bridge.preferences().shortcuts, true);
+  Orbit.uninit(win);
+  prefValues.clear();
+});
+
+test("private canvases never read browsing history for shortcuts", async () => {
+  const win = createWindow(true);
+  const bridge = Orbit.connectCanvas(createCanvasTab(win).canvas);
+  const calls = topSiteCalls.length;
+  assert.deepEqual(bridge.preferences(), { shortcuts: false, privateWindow: true });
+  assert.deepEqual(await bridge.topSites(), []);
+  assert.equal(topSiteCalls.length, calls);
+  Orbit.uninit(win);
+});
+
+test("address handoff gives typed text to Firefox's real address bar without navigating", () => {
+  const win = createWindow();
+  const { canvas } = createCanvasTab(win);
+  const bridge = Orbit.connectCanvas(canvas);
+  assert.equal(bridge.focusAddress(""), true);
+  assert.equal(win.gURLBar.focused, true);
+  assert.equal(win.gURLBar.searched, undefined, "an empty launcher only focuses the address bar");
+  bridge.focusAddress("orbit\nradial menus");
+  assert.equal(win.gURLBar.searched, "orbit radial menus", "control characters never reach the address bar");
+  assert.equal(win.gBrowser.selectedBrowser.currentURI.spec, "https://example.com/");
+  assert.throws(() => bridge.focusAddress(42), /address text/);
+  assert.throws(() => bridge.focusAddress("x".repeat(2049)), /address text/);
+  Orbit.openBoard(win);
+  win.OrbitChrome.focusAddress("from the toolbar canvas");
+  assert.equal(win.document.getElementById("orbit-canvas-overlay").hidden, true, "the overlay steps aside for the address bar");
+  Orbit.uninit(win);
+});
+
+test("a shortcut replaces its own native canvas tab with a fresh null principal", () => {
+  const win = createWindow();
+  const { canvas, browser, tab } = createCanvasTab(win);
+  tab.userContextId = 2;
+  browser.loadURI = (url, options) => { browser.loaded = { url: url.spec, options }; };
+  const bridge = Orbit.connectCanvas(canvas);
+  const tabs = win.gBrowser.tabs.length;
+  assert.deepEqual(bridge.navigate({ url: "https://github.com/", userContextId: 0 }), { url: "https://github.com/", userContextId: 2 });
+  assert.equal(browser.loaded.url, "https://github.com/");
+  assert.equal(browser.loaded.options.triggeringPrincipal.isSystemPrincipal, false);
+  assert.equal(browser.loaded.options.userContextId, 2, "the tab keeps its own container");
+  assert.equal(browser.loaded.options.allowInheritPrincipal, false);
+  assert.equal(win.gBrowser.tabs.length, tabs, "no extra tab is left behind");
+  for (const url of ["chrome://browser/content/orbit/orbit.html", "javascript:alert(1)", "https://user:pw@example.com/"]) {
+    assert.throws(() => bridge.navigate({ url }), /HTTP or HTTPS/);
+  }
+  assert.throws(() => bridge.navigate("https://github.com/"), /website record/);
+  Orbit.openBoard(win);
+  const before = win.gBrowser.tabs.length;
+  win.OrbitChrome.navigate({ url: "https://www.mozilla.org/" });
+  assert.equal(win.gBrowser.tabs.length, before + 1, "the toolbar canvas opens a real tab instead");
+  assert.equal(win.gBrowser.selectedBrowser.currentURI.spec, "https://www.mozilla.org/");
   Orbit.uninit(win);
 });

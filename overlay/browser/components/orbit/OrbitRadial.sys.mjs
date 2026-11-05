@@ -79,6 +79,9 @@ export function snapshotNativeMenu(popup, { identify, elements, populated }) {
       kind: tag === "menu" ? "submenu" : "native-command",
       icon: node.getAttribute("image") || "",
     };
+    // Firefox's localized menu access key, so its keyboard habits carry over.
+    const accesskey = node.getAttribute("accesskey") || node.accessKey || "";
+    if (typeof accesskey === "string" && [...accesskey.trim()].length === 1) item.accesskey = accesskey.trim();
     if (tag === "menu") {
       const child = Array.from(node.children).find(candidate => candidate.localName === "menupopup");
       item.children = child && populated.has(child)

@@ -112,8 +112,13 @@ globalThis.ChromeUtils = {
     for (const name of Object.keys(getters)) Object.defineProperty(target, name, { get: () => modules[name] });
   },
 };
-globalThis.Services = { appinfo: { OS: "WINNT" } };
-const { InteractionWindow, OrbitInteractions, searchCommands } = await import("../overlay/browser/components/orbit/OrbitInteractions.sys.mjs");
+const prefs = new Map();
+globalThis.Services = { appinfo: { OS: "WINNT" }, prefs: {
+  getBoolPref: (name, fallback) => prefs.has(name) ? prefs.get(name) : fallback,
+  setBoolPref: (name, value) => prefs.set(name, value),
+} };
+const { InteractionWindow, OrbitInteractions, searchCommands, FOCUS_DEFAULT_PREF, focusModeDefault } =
+  await import("../overlay/browser/components/orbit/OrbitInteractions.sys.mjs");
 
 function createWindow(isPrivate = false) {
   const win = new Target(); win.private = isPrivate;
@@ -604,4 +609,63 @@ test("toolbar command is trusted, works in private windows and uninitializes ind
   assert.equal(normal.document.getElementById("orbit-command-palette").hidden, true);
   OrbitInteractions.uninit(privateWin); assert.equal(privateWin.listenerCount(), 0);
   OrbitInteractions.uninit(normal); assert.equal(normal.listenerCount(), 0);
+});
+test("new windows open in focus mode by default and keep Firefox's initial address focus", () => {
+  prefs.clear();
+  assert.equal(focusModeDefault(), true, "focus mode is the shipped default");
+  const win = createWindow(); win.gURLBar.select();
+  OrbitInteractions.init(win);
+  const root = win.document.documentElement;
+  assert.equal(root.getAttribute("data-orbit-focus"), "true");
+  assert.equal(win.document.getElementById("orbit-focus-chip").hidden, false);
+  assert.equal(win.document.activeElement, win.gURLBar.inputField, "default focus mode must not steal the new-tab address focus");
+  assert.equal(root.getAttribute("data-orbit-focus-address-visible"), "true");
+  assert.equal(root.getAttribute("data-orbit-focus-address-expanded"), "true");
+  assert.equal(root.hasAttribute("data-orbit-focus-tools-visible"), false);
+  OrbitInteractions.uninit(win);
+  assert.equal(root.hasAttribute("data-orbit-focus"), false, "uninit restores the native layout");
+
+  const page = createWindow(); OrbitInteractions.init(page);
+  assert.equal(page.document.documentElement.getAttribute("data-orbit-focus"), "true");
+  assert.equal(page.document.activeElement, page.gBrowser.selectedBrowser);
+  assert.equal(page.document.documentElement.hasAttribute("data-orbit-focus-address-visible"), false,
+    "a restored webpage starts with every island concealed");
+  OrbitInteractions.uninit(page);
+});
+test("opting out, popups and fullscreen windows keep the full native toolbar", () => {
+  prefs.set(FOCUS_DEFAULT_PREF, false);
+  const classic = createWindow(); OrbitInteractions.init(classic);
+  assert.equal(classic.document.documentElement.hasAttribute("data-orbit-focus"), false);
+  OrbitInteractions.uninit(classic);
+  prefs.clear();
+  const popup = createWindow(); popup.document.documentElement.setAttribute("chromehidden", "menubar toolbar directories extrachrome");
+  OrbitInteractions.init(popup);
+  assert.equal(popup.document.documentElement.hasAttribute("data-orbit-focus"), false);
+  OrbitInteractions.uninit(popup);
+  const fullscreen = createWindow(); fullscreen.fullScreen = true; OrbitInteractions.init(fullscreen);
+  assert.equal(fullscreen.document.documentElement.hasAttribute("data-orbit-focus"), false);
+  OrbitInteractions.uninit(fullscreen);
+});
+test("Orbit commands switch the startup default and apply it to the current window", () => {
+  prefs.clear();
+  const win = createWindow(); const state = new InteractionWindow(win); state.applyStartupMode();
+  assert.equal(state.focusMode, true);
+  state.open(); state.input.value = "always full toolbar"; state.update();
+  assert.equal(state.results[0]?.id, "action:focus-default"); state.keydown(key("Enter"));
+  assert.equal(prefs.get(FOCUS_DEFAULT_PREF), false); assert.equal(state.focusMode, false);
+  state.open(); state.input.value = "always start focus"; state.update();
+  assert.equal(state.results[0]?.id, "action:focus-default"); state.keydown(key("Enter"));
+  assert.equal(prefs.get(FOCUS_DEFAULT_PREF), true); assert.equal(state.focusMode, true);
+  state.destroy(); prefs.clear();
+});
+test("the tools menu New tab command reveals the real address field before Firefox opens the tab", () => {
+  const win = createWindow(); const state = new InteractionWindow(win); state.setFocusMode(true);
+  const openTab = win.BrowserCommands.openTab;
+  win.BrowserCommands.openTab = () => {
+    assert.equal(islandVisible(state, "address"), true);
+    assert.equal(state.root.getAttribute("data-orbit-focus-address-expanded"), "true");
+    openTab();
+  };
+  state.focusTools.callbacks.onNewTab();
+  assert.equal(win.document.activeElement, win.gURLBar.inputField); state.destroy();
 });

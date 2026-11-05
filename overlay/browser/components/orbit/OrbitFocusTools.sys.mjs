@@ -38,10 +38,14 @@ export function focusExtensionItems(win) {
   return items;
 }
 
-function trustedActivation(event) {
+function trustedActivation(event, item = null) {
   if (!event?.isTrusted || event.isComposing || event.repeat || event.ctrlKey || event.metaKey || event.altKey) return false;
-  return event.type === "pointerup" && event.button === 0 ||
-    event.type === "keydown" && (event.key === "Enter" || event.key === " ");
+  if (event.type === "pointerup") return event.button === 0;
+  if (event.type !== "keydown") return false;
+  if (event.key === "Enter" || event.key === " ") return true;
+  // The tools wheel's own access keys, shown while it is keyboard-driven.
+  const key = typeof item?.accesskey === "string" ? item.accesskey.toLocaleLowerCase() : "";
+  return [...key].length === 1 && String(event.key).toLocaleLowerCase() === key;
 }
 
 /** A focus-mode entry point into original Firefox controls. Native extension
@@ -144,30 +148,34 @@ export class OrbitFocusTools {
       id: item.id, label: item.label, icon: item.icon, disabled: item.disabled,
     }));
     return [
-      {id: "orbit-focus-extensions", label: "Extensions", icon: "✧", children: [
+      {id: "orbit-focus-extensions", label: "Extensions", icon: "✧", accesskey: "E", children: [
         ...extensions,
-        {id: "orbit-focus-extensions-panel", label: "Extension controls", icon: "✧"},
-        {id: "orbit-focus-manage-extensions", label: "Manage extensions", icon: "▦"},
+        {id: "orbit-focus-extensions-panel", label: "Extension controls", icon: "✧", accesskey: "C"},
+        {id: "orbit-focus-manage-extensions", label: "Manage extensions", icon: "▦", accesskey: "M"},
       ]},
-      {id: "orbit-focus-bookmarks", label: "Bookmarks", icon: "☆", children: [
-        {id: "orbit-focus-bookmarks-panel", label: "Browse bookmarks", icon: "☆"},
-        {id: "orbit-focus-bookmark-page", label: "Bookmark this page", icon: "＋"},
-        {id: "orbit-focus-bookmarks-library", label: "Bookmark library", icon: "▤"},
+      {id: "orbit-focus-bookmarks", label: "Bookmarks", icon: "☆", accesskey: "B", children: [
+        {id: "orbit-focus-bookmarks-panel", label: "Browse bookmarks", icon: "☆", accesskey: "B"},
+        {id: "orbit-focus-bookmark-page", label: "Bookmark this page", icon: "＋", accesskey: "P"},
+        {id: "orbit-focus-bookmarks-library", label: "Bookmark library", icon: "▤", accesskey: "L"},
       ]},
-      {id: "orbit-focus-history", label: "History", icon: "↻", children: [
-        {id: "orbit-focus-history-panel", label: "Recent history", icon: "↻"},
-        {id: "orbit-focus-history-library", label: "History library", icon: "▤"},
+      {id: "orbit-focus-history", label: "History", icon: "↻", accesskey: "H", children: [
+        {id: "orbit-focus-history-panel", label: "Recent history", icon: "↻", accesskey: "R"},
+        {id: "orbit-focus-history-library", label: "History library", icon: "▤", accesskey: "L"},
       ]},
-      {id: "orbit-focus-downloads", label: "Downloads", icon: "↓"},
-      {id: "orbit-focus-settings", label: "Settings", icon: "◉", children: [
-        {id: "orbit-focus-preferences", label: "Browser settings", icon: "◉"},
-        {id: "orbit-focus-privacy", label: "Privacy settings", icon: "⌖"},
-        {id: "orbit-focus-more-tools", label: "More browser tools", icon: "▦"},
-        {id: "orbit-focus-customize", label: "Customize controls", icon: "▣"},
+      {id: "orbit-focus-downloads", label: "Downloads", icon: "↓", accesskey: "D"},
+      {id: "orbit-focus-settings", label: "Settings", icon: "◉", accesskey: "S", children: [
+        {id: "orbit-focus-preferences", label: "Browser settings", icon: "◉", accesskey: "S"},
+        {id: "orbit-focus-privacy", label: "Privacy settings", icon: "⌖", accesskey: "P"},
+        {id: "orbit-focus-more-tools", label: "More browser tools", icon: "▦", accesskey: "T"},
+        {id: "orbit-focus-customize", label: "Customize controls", icon: "▣", accesskey: "C"},
       ]},
-      {id: "orbit-focus-canvas", label: "Canvas", icon: "▦"},
-      {id: "orbit-focus-browser-menu", label: "Browser menu", icon: "•••"},
-      {id: "orbit-focus-exit", label: "Exit focus", icon: "↗"},
+      // Focus mode conceals the tab strip, so its New Tab entry lives here.
+      {id: "orbit-focus-tabs", label: "Tabs", icon: "▣", accesskey: "T", children: [
+        {id: "orbit-focus-new-tab", label: "New tab", icon: "＋", accesskey: "N"},
+        {id: "orbit-focus-canvas", label: "Open canvas", icon: "▦", accesskey: "O"},
+      ]},
+      {id: "orbit-focus-browser-menu", label: "Browser menu", icon: "•••", accesskey: "M"},
+      {id: "orbit-focus-exit", label: "Exit focus", icon: "↗", accesskey: "X"},
     ];
   }
 
@@ -300,9 +308,10 @@ export class OrbitFocusTools {
   }
 
   activate(node, event) {
-    if (this.disposed || !this.visible || !trustedActivation(event)) return;
+    if (this.disposed || !this.visible) return;
     const id = node?.id;
     const current = this.items().flatMap(item => item.children || [item]).find(item => item.id === id);
+    if (!trustedActivation(event, current)) return;
     if (id !== "orbit-focus-commands" && (!current || current.disabled || current.children)) return;
     const win = this.win;
     let anchor = null;
@@ -321,6 +330,7 @@ export class OrbitFocusTools {
     } else {
       const action = {
         "orbit-focus-commands": () => this.callbacks.onCommands?.(),
+        "orbit-focus-new-tab": () => this.callbacks.onNewTab ? this.callbacks.onNewTab() : win.BrowserCommands.openTab(),
         "orbit-focus-canvas": () => lazy.Orbit.openBoard(win),
         "orbit-focus-exit": () => this.callbacks.onExit?.(),
         "orbit-focus-preferences": () => win.openPreferences(),

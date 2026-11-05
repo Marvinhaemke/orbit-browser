@@ -207,6 +207,32 @@ def canvas_document_note(driver, note_id, text):
                     "shared native canvas page renders the saved note")
 
 
+def verify_canvas_launcher(driver, result):
+    """The canvas search field hands off to Firefox's real address bar."""
+    native_canvas_ready(driver)
+    driver.set_context("content")
+    click_canvas_element(driver, driver.find_element(By.ID, "greeting"))
+    wait_for(driver, "return !gURLBar.focused;", "a click in the canvas moves focus away from the address bar")
+    driver.set_context("content")
+    click_canvas_element(driver, driver.find_element(By.ID, "address-launcher"))
+    wait_for(driver, "return gURLBar.focused;", "the canvas launcher focuses Firefox's native address bar")
+    state = driver.execute_script('''
+        const doc = gBrowser.selectedBrowser.contentDocument;
+        return {greeting: doc.getElementById("greeting").textContent,
+            summary: doc.getElementById("board-summary").textContent,
+            launcher: doc.getElementById("address-launcher").value,
+            shortcutRows: doc.querySelectorAll("#shortcut-list .shortcut").length,
+            shortcutsHidden: doc.getElementById("shortcuts").hidden,
+            value: gURLBar.value, uri: gBrowser.selectedBrowser.currentURI.spec};
+    ''')
+    result["canvas_launcher"] = state
+    assert state["greeting"].startswith("Good ") and state["summary"], state
+    assert state["uri"] == CANVAS_URI and not state["value"] and not state["launcher"], state
+    # A fresh disposable profile has no frequent sites, so the row stays out of the way.
+    assert state["shortcutsHidden"] == (state["shortcutRows"] == 0), state
+    result["checks"].append("The canvas greeting renders and its search field focuses Firefox's real address bar without navigating")
+
+
 def verify_native_newtab_ux(driver, fixture_handle, url, result, folder):
     """Exercise the browser's real new-tab commands and isolated workspaces."""
     checks = result["checks"]
@@ -239,6 +265,7 @@ def verify_native_newtab_ux(driver, fixture_handle, url, result, folder):
             item.id === "smoke-note" && item.text === "A native saved note");
     '''), "Ctrl+T did not share the existing native window canvas workspace"
     driver.execute_script('window.orbitSmokeStaleCanvasBridge = gBrowser.selectedBrowser.contentWindow.OrbitCanvasBridge;')
+    verify_canvas_launcher(driver, result)
     note_id = create_native_note(driver, "Canvas New Tab shared native note")
     second = open_native_canvas_tab(driver, toolbar=True)
     canvas_document_note(driver, note_id, "Canvas New Tab shared native note")
@@ -410,6 +437,9 @@ def main() -> None:
             workspace=workspace_context.name, gecko_log=str(report.parent / "gecko.log"),
             app_args=["-no-remote", "--remote-allow-system-access"],
             prefs={"browser.startup.page": 0, "browser.startup.homepage": "about:blank",
+                   # These checks drive the full native toolbar; smoke_ux.py covers
+                   # the default focus-mode window separately.
+                   "browser.orbit.focus.default": False,
                    "remote.events.async.mouse.enabled": True,
                    "browser.tabs.warnOnClose": False, "browser.warnOnQuit": False},
         )

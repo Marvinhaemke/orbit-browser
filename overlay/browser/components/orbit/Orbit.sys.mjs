@@ -15,6 +15,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
     "moz-src:///toolkit/components/contextualidentity/ContextualIdentityService.sys.mjs",
   CustomizableUI:
     "moz-src:///browser/components/customizableui/CustomizableUI.sys.mjs",
+  NewTabUtils: "resource://gre/modules/NewTabUtils.sys.mjs",
   OrbitInteractions: "moz-src:///browser/components/orbit/OrbitInteractions.sys.mjs",
   OrbitRadial: "moz-src:///browser/components/orbit/OrbitRadial.sys.mjs",
   OrbitTheme: "moz-src:///browser/components/orbit/OrbitTheme.sys.mjs",
@@ -30,6 +31,9 @@ const HTML_NS = "http://www.w3.org/1999/xhtml";
 const MAX_BYTES = 2 * 1024 * 1024;
 const ID_PATTERN = /^[a-zA-Z0-9_-]{1,128}$/;
 const COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
+const SHORTCUTS_PREF = "browser.orbit.newtab.shortcuts";
+const SHORTCUT_LIMIT = 8;
+const FAVICON_PATTERN = /^data:image\/(?:png|jpeg|gif|webp|x-icon|vnd\.microsoft\.icon);base64,[a-zA-Z0-9+/=]+$/;
 
 function identifier(value, label = "id") {
   if (typeof value !== "string" || !ID_PATTERN.test(value)) {
@@ -70,6 +74,30 @@ function webURL(value) {
     throw new TypeError("Orbit cards require an HTTP or HTTPS URL without credentials");
   }
   return uri.spec;
+}
+
+/** Frequently visited sites come from Firefox's own top-sites query. Only web
+ * addresses, plain titles and local raster favicons reach the canvas. */
+export function shortcutRecords(links, limit = SHORTCUT_LIMIT) {
+  const result = [];
+  const seen = new Set();
+  for (const link of Array.isArray(links) ? links : []) {
+    if (result.length >= limit) break;
+    let url;
+    try {
+      url = webURL(link?.url);
+    } catch {
+      continue;
+    }
+    if (seen.has(url)) continue;
+    seen.add(url);
+    const host = Services.io.newURI(url).host.replace(/^www\./, "");
+    const title = typeof link.title === "string" && link.title.trim() ? link.title.trim().slice(0, 512) : host;
+    const icon = [link.smallFavicon, link.favicon].find(value =>
+      typeof value === "string" && value.length <= 65536 && FAVICON_PATTERN.test(value));
+    result.push({ url, title, host, ...(icon ? { favicon: icon } : {}) });
+  }
+  return result;
 }
 
 function isWebURL(value) {
@@ -279,6 +307,12 @@ class OrbitWindow {
     expose("closePeek", () => this.closePeek());
     expose("split", record => this.split(record));
     expose("hideCanvas", () => browser ? this.returnToBrowser(browser) : this.hide());
+    expose("topSites", () => this.topSites());
+    expose("hideShortcut", url => this.hideShortcut(url));
+    expose("preferences", () => this.preferences());
+    expose("setShortcutsVisible", value => this.setShortcutsVisible(value));
+    expose("focusAddress", value => this.focusAddress(value));
+    expose("navigate", record => browser ? this.navigateCanvas(browser, record) : this.openTab(record));
     expose("subscribe", callback => {
       if (typeof callback !== "function") {
         throw new TypeError("Orbit subscription requires a function");
@@ -615,6 +649,76 @@ class OrbitWindow {
       // and offer the address bar rather than opening an extra empty document.
       this.win.gURLBar?.select();
     }
+  }
+
+  preferences() {
+    return {
+      shortcuts: !this.isPrivate && Services.prefs.getBoolPref(SHORTCUTS_PREF, true),
+      privateWindow: this.isPrivate,
+    };
+  }
+
+  setShortcutsVisible(value) {
+    if (typeof value !== "boolean") {
+      throw new TypeError("Orbit shortcut visibility must be a boolean");
+    }
+    Services.prefs.setBoolPref(SHORTCUTS_PREF, value);
+    return this.preferences();
+  }
+
+  async topSites() {
+    // Private windows never show browsing history on their new-tab canvas.
+    if (!this.preferences().shortcuts) {
+      return [];
+    }
+    try {
+      const links = await lazy.NewTabUtils.activityStreamLinks.getTopSites({
+        numItems: SHORTCUT_LIMIT, onePerDomain: true, includeFavicon: true,
+      });
+      return shortcutRecords(links);
+    } catch (error) {
+      console.error("Orbit could not read frequently visited sites", error);
+      return [];
+    }
+  }
+
+  hideShortcut(value) {
+    // Firefox's own top-sites block list, shared with its regular new tab.
+    lazy.NewTabUtils.activityStreamLinks.blockURL({ url: webURL(value) });
+    return true;
+  }
+
+  /** Hand typed text to Firefox's real address bar, which owns search
+   * engines, suggestions, URL fixup and Enter. The canvas never navigates
+   * from typed text itself. */
+  focusAddress(value = "") {
+    text(value, 2048, "address text");
+    const query = value.replace(/[\u0000-\u001f\u007f]/g, " ");
+    this.hide();
+    const urlbar = this.win.gURLBar;
+    if (!urlbar) {
+      throw new Error("Firefox's address bar is unavailable in this window");
+    }
+    if (query.trim() && typeof urlbar.search === "function") {
+      urlbar.search(query);
+    } else {
+      urlbar.select();
+    }
+    return true;
+  }
+
+  /** A shortcut replaces the new-tab canvas in its own tab, like any page
+   * opened from Firefox's New Tab, with a fresh null principal. */
+  navigateCanvas(browser, value) {
+    if (!value || typeof value !== "object") {
+      throw new TypeError("Orbit requires a website record");
+    }
+    const tab = this.win.gBrowser.getTabForBrowser(browser);
+    const url = webURL(value.url);
+    const userContextId = containerID(Number(tab?.userContextId || 0));
+    browser.loadURI(Services.io.newURI(url), this.navigationOptions({ url, userContextId }));
+    browser.focus?.();
+    return { url, userContextId };
   }
 
   closeTab(id) {

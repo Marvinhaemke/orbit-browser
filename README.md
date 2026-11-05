@@ -16,12 +16,17 @@ After a successful run, download its `Orbit-Windows-x64` artifact and extract it
 
 Every new tab opens the **Orbit canvas**. Ctrl+T and the native plus button retain address-bar focus so you can immediately type a website. The **Orbit canvas** toolbar button or **Alt + Shift + O** also opens the workspace over an existing page. Multiple canvas tabs share the same window’s workspace.
 
+The canvas greets you with the date and a live summary of your open tabs, cards, frames, and notes. Its **Search the web or enter an address** field hands whatever you type to Firefox's real address bar, so search engines, suggestions, and URL handling stay Firefox's own; this also works in focus mode, where the address bar is otherwise hidden. Beside it, shortcuts to your most visited sites open in the same tab (Ctrl+click or middle-click opens a background tab). Remove a shortcut with its **×**, or hide the row with **Hide**. Private windows never show shortcuts.
+
 ## Radial browser interaction
 
 - **Quick right-click on a webpage:** release the button to open page actions. **Open in new tab** sits in the center and uses the clicked link or image when available; otherwise it opens the current page in a new tab.
 - **Hold the right button:** the tab wheel appears on button down. Move onto a tab and release to switch to it. Releasing without choosing a tab opens page actions.
 - **Hover a submenu:** a compact fan opens outside the item you hovered. Its options stay near their parent rather than filling the entire outer ring. Native tab groups and **More** work the same way, including further layers. Each ring contains at most eight options.
 - **Escape:** move back one layer, then dismiss. Arrow keys and Enter also navigate the menu. Clicking outside dismisses it.
+- **Keyboard letters:** Firefox's own context-menu access keys work in the wheel (for example **T** opens a link in a new tab), including commands paged behind **More**. While you use the keyboard, each circle shows its key. Typing a letter without an access key highlights the next matching command.
+
+Every command has a descriptive icon. The hub's rim points toward the hovered command, and the caption below the wheel adds context: a tab's site, how many tabs a group holds, or how many options a submenu offers. Right-clicking the canvas opens a smaller wheel whose actions match what you clicked: a website card, a note, a frame, or empty space. Each action there also has a letter.
 
 The page wheel uses Firefox’s actual context commands for links, images, selected text, editing, media, and extension actions. Its animations follow the operating system’s reduced-motion preference, and its colors adapt to light, dark, and high-contrast settings.
 
@@ -31,7 +36,9 @@ The page wheel uses Firefox’s actual context commands for links, images, selec
 
 **Send to canvas** in a webpage's radial menu collects the page, a clicked link, or selected text. Cards keep the website's address and container; text becomes an editable note with its source address. Collecting a link does not create another browser tab. Captures join the current window's workspace, and private captures stay in memory.
 
-**Focus mode** (**Alt + Shift + F**) gives the page room while browser controls become three independent islands. Approach the **top middle** for the floating address bar; click it or press **Ctrl + L** (**Command + L** on macOS) to expand the real address bar and its suggestions. Approach the **top left** for the tools radial menu, including native extension actions and browser settings. Approach the **top right** for the rounded island containing the original window controls. Each island stays open while you use it and recedes after you leave. The visible **Address bar** and **Exit focus** buttons also provide direct access. **Escape** dismisses active controls before restoring the full interface. This uses ordinary browser chrome and leaves Firefox's fullscreen mode available separately.
+**Focus mode** is the default: every new browser window opens with the page given room while browser controls become three independent islands. **Alt + Shift + F** toggles it in the current window. To start new windows with the full toolbar instead, open **Orbit commands** and choose **Always start with the full toolbar** (or set `browser.orbit.focus.default` to `false` in `about:config`). Pop-up windows always keep their native layout.
+
+In focus mode, approach the **top middle** for the floating address bar; click it or press **Ctrl + L** (**Command + L** on macOS) to expand the real address bar and its suggestions. Approach the **top left** for the tools radial menu, including native extension actions, browser settings, and **Tabs → New tab** (the tab strip is hidden in focus mode; Ctrl+T also works). Approach the **top right** for the rounded island containing the original window controls. Each island stays open while you use it and recedes after you leave. The visible **Address bar** and **Exit focus** buttons also provide direct access. **Escape** dismisses active controls before restoring the full interface. This uses ordinary browser chrome and leaves Firefox's fullscreen mode available separately.
 
 ## Test interface changes without downloading the whole browser
 

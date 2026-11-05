@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {pageRadialItems, layoutRadialRings, radialSectorPath, hitRadialGeometry}
-  from "../overlay/browser/components/orbit/OrbitRadialView.sys.mjs";
+import {pageRadialItems, layoutRadialRings, radialSectorPath, hitRadialGeometry, glyphName, monogram,
+  radialDetail, normalizedAccessKey} from "../overlay/browser/components/orbit/OrbitRadialView.sys.mjs";
 
 test("pagination keeps every original action reachable through bounded rings", () => {
   const source = Array.from({length: 133}, (_, index) => ({id: `native-${index}`, label: `Tab ${index}`}));
@@ -201,4 +201,46 @@ test("single-sector SVG uses two arcs for each circle and never emits NaN", () =
   const path = radialSectorPath(100,100,30,80,0,Math.PI * 2);
   assert.equal((path.match(/ A /g) || []).length, 4);
   assert.ok(!path.includes("NaN"));
+});
+
+test("common native page actions get distinct descriptive glyphs instead of first letters", () => {
+  const expected = {
+    "context-openlinkintab": "plus", "context-openlink": "window", "context-openlinkprivate": "private",
+    "context-openlinkinusercontext-menu": "container", "context-openlinkinsplitview": "split",
+    "context-bookmarklink": "star", "context-savelink": "download", "context-copylink": "link",
+    "context-copy": "copy", "context-paste": "paste", "context-cut": "cut", "context-undo": "undo",
+    "context-selectall": "select", "context-searchselect": "search", "context-viewsource": "code",
+    "context-inspect": "inspect", "context-viewimage": "image", "context-copyimage-contents": "copy",
+    "context-saveimage": "download", "context-take-screenshot": "screenshot", "context-print-selection": "print",
+    "context-translate-selection": "translate", "context-back": "back", "context-forward": "forward",
+    "context-reload": "reload", "orbit-send-to-canvas": "canvas", "orbit-canvas-page": "card",
+    "orbit-canvas-link": "link", "orbit-canvas-selection": "note", "orbit-focus-history": "clock",
+    "orbit-focus-settings": "gear", "orbit-focus-extensions": "puzzle", "orbit-focus-exit": "expand",
+    "orbit-focus-new-tab": "plus", "orbit-focus-tabs": "tab", "orbit-radial-current-tab": "tab",
+  };
+  for (const [id, glyph] of Object.entries(expected)) assert.equal(glyphName({id, label: id}), glyph, id);
+  assert.equal(glyphName({id: "orbit-more-0-3", icon: "•••", children: [{id: "x"}]}), "more");
+  assert.equal(glyphName({id: "orbit-radial-group-4", icon: "▦", children: [{id: "x"}]}), "grid");
+  assert.equal(glyphName({id: "orbit-radial-tab-2", label: "Mail"}), null, "unmarked tabs use a site monogram");
+});
+
+test("tab monograms name the site rather than its subdomain or registry suffix", () => {
+  assert.equal(monogram({description: "https://en.wikipedia.org/wiki/Orbit"}), "W");
+  assert.equal(monogram({description: "https://www.bbc.co.uk/news"}), "B");
+  assert.equal(monogram({description: "https://github.com/"}), "G");
+  assert.equal(monogram({description: "about:preferences", label: "settings"}), "S");
+  assert.equal(monogram({description: "", label: ""}), "•");
+});
+
+test("hover captions add plain context: host, tab counts, options and availability", () => {
+  assert.equal(radialDetail({kind: "tab", description: "https://mail.example.com/inbox?id=1"}), "mail.example.com");
+  assert.equal(radialDetail({kind: "tab", description: "about:preferences"}), "about:preferences");
+  assert.equal(radialDetail({kind: "group", collapsed: true, children: [{id: "a"}, {id: "b"}]}), "2 tabs · collapsed");
+  assert.equal(radialDetail({kind: "submenu", children: [{id: "a"}]}), "1 option");
+  assert.equal(radialDetail({kind: "submenu", children: [{id: "p", kind: "placeholder"}]}), "Loading options…");
+  assert.equal(radialDetail({id: "x", disabled: true}), "Unavailable here");
+  assert.equal(radialDetail({id: "x"}), "");
+  assert.equal(normalizedAccessKey({accesskey: "T"}), "t");
+  assert.equal(normalizedAccessKey({accesskey: "ab"}), "");
+  assert.equal(normalizedAccessKey({}), "");
 });

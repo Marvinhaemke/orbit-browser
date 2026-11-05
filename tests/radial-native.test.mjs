@@ -508,3 +508,15 @@ test("uninit removes native hooks and registration uses trusted actor options on
   assert.equal(options.includeChrome, false);
   assert.equal(options.child.events.mousedown.wantUntrusted, false);
 });
+
+test("menu snapshot carries Firefox's single-character access keys and ignores malformed ones", () => {
+  const popup = new NativeNode("menupopup");
+  const tab = new NativeNode("menuitem", "context-openlinkintab", "Open Link in New Tab");
+  tab.setAttribute("accesskey", "T");
+  const long = new NativeNode("menuitem", "context-copylink", "Copy Link");
+  long.setAttribute("accesskey", "LL");
+  const none = new NativeNode("menuitem", "context-inspect", "Inspect");
+  popup.append(tab, long, none);
+  const snapshot = snapshotNativeMenu(popup, { identify: () => "generated", elements: new Map(), populated: new Set() });
+  assert.deepEqual(snapshot.map(item => item.accesskey), ["T", undefined, undefined]);
+});

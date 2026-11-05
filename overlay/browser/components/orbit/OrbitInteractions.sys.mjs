@@ -12,6 +12,21 @@ ChromeUtils.defineESModuleGetters(lazy, {
 const HTML_NS = "http://www.w3.org/1999/xhtml";
 const windows = new WeakMap();
 let widgetCreated = false;
+export const FOCUS_DEFAULT_PREF = "browser.orbit.focus.default";
+
+/** Focus mode is Orbit's default presentation. The person can switch new
+ * windows back to the full toolbar from Orbit commands or about:config. */
+export function focusModeDefault() {
+  try {
+    return Services.prefs.getBoolPref(FOCUS_DEFAULT_PREF, true);
+  } catch {
+    return true;
+  }
+}
+
+export function setFocusModeDefault(enabled) {
+  Services.prefs.setBoolPref(FOCUS_DEFAULT_PREF, enabled === true);
+}
 
 /** Search is local to this window. Text never becomes a navigation command. */
 export function searchCommands(commands, query, limit = 40) {
@@ -209,15 +224,14 @@ export class InteractionWindow {
     const commands = [
       { id: "action:canvas", kind: "command", label: "Open canvas", detail: "Your spatial tabs, frames, and notes", keywords: "board workspace", run: () => lazy.Orbit.openBoard(this.win) },
       { id: "action:focus", kind: "command", label: this.focusMode ? "Exit focus mode" : "Enter focus mode", detail: "Let browser controls recede · Alt+Shift+F", keywords: "restore toolbar distraction", run: () => this.setFocusMode(!this.focusMode) },
-      { id: "action:new-tab", kind: "command", label: "New tab", detail: "Open a fresh canvas tab · Ctrl+T", run: () => {
-        if (this.focusMode) {
-          this.searchFallback = null;
-          this.root.removeAttribute("data-orbit-focus-reveal");
-          this.reveal(true, true);
-          this.scheduleConceal("address");
-        }
-        this.win.BrowserCommands.openTab();
-      } },
+      focusModeDefault()
+        ? { id: "action:focus-default", kind: "command", label: "Always start with the full toolbar",
+          detail: "New windows currently open in focus mode", keywords: "default startup preference classic layout",
+          run: () => { setFocusModeDefault(false); this.setFocusMode(false); } }
+        : { id: "action:focus-default", kind: "command", label: "Always start in focus mode",
+          detail: "New windows currently open with the full toolbar", keywords: "default startup preference",
+          run: () => { setFocusModeDefault(true); this.setFocusMode(true); } },
+      { id: "action:new-tab", kind: "command", label: "New tab", detail: "Open a fresh canvas tab · Ctrl+T", run: () => this.openNewTab() },
     ];
     for (const tab of this.win.gBrowser.openTabs || this.win.gBrowser.tabs) {
       if (tab.closing || !this.win.gBrowser.getTabForBrowser(tab.linkedBrowser)) continue;
@@ -242,6 +256,18 @@ export class InteractionWindow {
         run: () => lazy.Orbit.openFrame(this.win, frame.id) });
     }
     return commands;
+  }
+
+  /** Firefox's own New Tab command focuses the address field, so reveal the
+   * concealed native input before it runs. */
+  openNewTab() {
+    if (this.focusMode) {
+      this.searchFallback = null;
+      this.root.removeAttribute("data-orbit-focus-reveal");
+      this.reveal(true, true);
+      this.scheduleConceal("address");
+    }
+    this.win.BrowserCommands.openTab();
   }
 
   open() {
@@ -445,6 +471,7 @@ export class InteractionWindow {
       onAddressReveal: () => this.reveal(true, true),
       onExit: () => this.setFocusMode(false),
       onCommands: () => this.open(),
+      onNewTab: () => this.openNewTab(),
       onPointerEnter: () => {
         this.islands.tools.hovered = true;
         this.cancelIslandTimer("tools", "conceal");
@@ -465,13 +492,26 @@ export class InteractionWindow {
     });
   }
 
-  setFocusMode(enabled) {
+  /** Ordinary browser windows open in focus mode by default. Popups and other
+   * windows whose chrome Firefox hides keep their native layout. */
+  applyStartupMode() {
+    if (this.disposed || !focusModeDefault() || (this.root.getAttribute("chromehidden") || "").trim()) return false;
+    // Firefox focuses the real address field for new tabs and blank windows
+    // before delayed startup. Keep that focus and show it as the expanded island.
+    this.setFocusMode(true, { preserveAddress: true });
+    return this.focusMode;
+  }
+
+  setFocusMode(enabled, { preserveAddress = false } = {}) {
     if (this.disposed || (enabled && (this.win.fullScreen || this.root.getAttribute("customizing") === "true"))) return;
     enabled = !!enabled;
     if (enabled === this.focusMode) return;
     if (enabled) this.ensureFocusTools();
     const toolbox = this.doc.getElementById("navigator-toolbox");
-    if (this.palette.hidden && (toolbox?.contains(this.doc.activeElement) || this.chip.contains(this.doc.activeElement))) {
+    const keepAddress = enabled && preserveAddress && this.palette.hidden &&
+      !!this.addressNode()?.contains(this.doc.activeElement);
+    if (!keepAddress && this.palette.hidden &&
+        (toolbox?.contains(this.doc.activeElement) || this.chip.contains(this.doc.activeElement))) {
       this.win.gBrowser.selectedBrowser.focus();
     }
     this.focusMode = enabled;
@@ -487,8 +527,10 @@ export class InteractionWindow {
       this.hideIsland(island, true);
       if (!enabled) this.islands[island].popups.clear();
     }
-    if (enabled) this.updateFocusLayout();
-    else {
+    if (enabled) {
+      this.updateFocusLayout();
+      if (keepAddress) this.showIsland("address", true);
+    } else {
       this.restoreFocusMarkers();
       for (const attr of ["data-orbit-focus-reveal", "data-orbit-focus-nav-titlebar", "data-orbit-focus-native-titlebar", "data-orbit-focus-measuring"]) {
         this.root.removeAttribute(attr);
@@ -715,7 +757,13 @@ export const OrbitInteractions = {
   dismissTools(win, reason = "page-radial") { windows.get(win)?.dismissTools(reason); },
   init(win) {
     if (!win.gBrowser || windows.has(win)) return;
-    windows.set(win, new InteractionWindow(win));
+    const state = new InteractionWindow(win);
+    windows.set(win, state);
+    try {
+      state.applyStartupMode();
+    } catch (error) {
+      console.error("Orbit default focus mode:", error);
+    }
     if (widgetCreated) return;
     lazy.CustomizableUI.createWidget({
       id: "orbit-command-button", defaultArea: lazy.CustomizableUI.AREA_NAVBAR,

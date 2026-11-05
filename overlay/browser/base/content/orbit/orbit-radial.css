@@ -22,6 +22,10 @@
   --orbit-center-a: #29404c;
   --orbit-center-b: #303650;
   --orbit-caption: #a8b7cb;
+  --orbit-monogram: #304a5466;
+  --orbit-key-surface: #70ded3;
+  --orbit-key-ink: #10232b;
+  --orbit-pointer: #70ded3;
   position: fixed;
   inset: 0;
   z-index: 2147483646;
@@ -85,7 +89,13 @@
   opacity: 1;
   animation: orbit-radial-sector-in 160ms ease both;
   animation-delay: var(--orbit-stagger, 0ms);
+  /* Hit testing stays geometric; this lift is purely visual and smaller than
+     the guaranteed gap between neighbouring circles. */
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: transform 180ms cubic-bezier(.18,.9,.25,1.15);
 }
+.orbit-radial-sector.orbit-radial-active:not(.orbit-radial-disabled) { transform: scale(1.06); }
 .orbit-radial-sector-shape {
   pointer-events: visiblePainted;
   fill: var(--orbit-gradient-base, url(#orbit-gradient-base));
@@ -127,7 +137,38 @@
 .orbit-radial-parent .orbit-radial-icon { fill: var(--orbit-icon); }
 .orbit-radial-disabled { opacity: .42; cursor: default; }
 .orbit-radial-checked .orbit-radial-label { font-weight: 700; }
-.orbit-radial-submenu-mark { font-size: 22px; fill: var(--orbit-icon); pointer-events: none; }
+.orbit-radial-submenu-mark {
+  stroke: var(--orbit-icon);
+  stroke-width: 1.7;
+  opacity: .78;
+  pointer-events: none;
+}
+.orbit-radial-parent .orbit-radial-submenu-mark, .orbit-radial-active .orbit-radial-submenu-mark { opacity: 1; }
+.orbit-radial-monogram {
+  fill: var(--orbit-monogram);
+  stroke: var(--orbit-line);
+  stroke-width: 1;
+  pointer-events: none;
+}
+.orbit-radial-monogram-label {
+  font-weight: 700;
+  fill: var(--orbit-icon);
+  pointer-events: none;
+}
+/* Access-key badges appear only while the wheel is driven from the keyboard. */
+.orbit-radial-key { opacity: 0; transition: opacity 120ms ease; pointer-events: none; }
+.orbit-radial-keyboard .orbit-radial-key { opacity: 1; }
+.orbit-radial-key-surface { fill: var(--orbit-key-surface); stroke: var(--orbit-shine); stroke-width: 1; }
+.orbit-radial-key-label { font-size: 9.5px; font-weight: 700; fill: var(--orbit-key-ink); }
+.orbit-radial-disabled .orbit-radial-key { display: none; }
+.orbit-radial-pointer {
+  stroke: var(--orbit-pointer);
+  stroke-width: 3;
+  opacity: 0;
+  transition: opacity 140ms ease;
+  pointer-events: none;
+}
+.orbit-radial-pointer.orbit-radial-pointer-visible { opacity: 1; }
 .orbit-radial-center {
   position: absolute;
   left: 50%;
@@ -165,6 +206,18 @@
 .orbit-radial-center:disabled .orbit-radial-center-label { opacity: .75; }
 .orbit-radial-center-icon { font-size: 26px; line-height: 29px; color: var(--orbit-icon); font-weight: 400; }
 .orbit-radial-center-icon.orbit-radial-vector-icon { width: 26px; height: 26px; flex-shrink: 0; }
+.orbit-radial-center-detail {
+  font-size: 9px;
+  line-height: 1.25;
+  font-weight: 500;
+  color: var(--orbit-caption);
+  max-width: 78px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.orbit-radial-center-info { gap: 3px; }
+.orbit-radial-center-info .orbit-radial-center-icon.orbit-radial-vector-icon { width: 20px; height: 20px; }
 .orbit-radial-center-label {
   font-size: 10.5px;
   line-height: 1.25;
@@ -180,32 +233,61 @@
   position: absolute;
   left: 50%;
   top: 50%;
-  transform: translate(-50%, calc(var(--orbit-center-size) / 2 - 13px));
-  font-size: 6.5px;
-  letter-spacing: .8px;
+  transform: translate(-50%, calc(var(--orbit-center-size) / 2 - 14px));
+  font-size: 7.5px;
+  font-weight: 650;
+  letter-spacing: 1px;
   line-height: 1;
   color: var(--orbit-caption);
   white-space: nowrap;
   pointer-events: none;
 }
+/* The caption reserves a fixed box clear of every circle; its visible pill
+   shrinks to the hovered command's name and context. */
 .orbit-radial-command-label {
   position: absolute;
   box-sizing: border-box;
-  padding: 11px 15px;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.orbit-radial-command-pill {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 9px 16px 10px;
   border: 1px solid var(--orbit-shine);
   border-radius: 18px;
   background: linear-gradient(145deg, var(--orbit-surface-a), var(--orbit-surface-b));
   box-shadow: 5px 7px 18px var(--orbit-deep-shadow), -2px -2px 7px var(--orbit-shine);
   color: var(--orbit-label);
-  font-size: 12px;
-  line-height: 1.5;
-  font-weight: 550;
   text-align: center;
-  overflow-wrap: anywhere;
   overflow: hidden;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 120ms ease;
+}
+.orbit-radial-command-title {
+  font-size: 12.5px;
+  line-height: 1.4;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.orbit-radial-command-detail {
+  font-size: 10.5px;
+  line-height: 1.35;
+  color: var(--orbit-caption);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .orbit-radial-command-label[hidden] { display: none; }
 .orbit-radial-visible .orbit-radial-command-label { opacity: 1; }
@@ -244,11 +326,16 @@
     --orbit-center-a: #d9eeed;
     --orbit-center-b: #e6e9f5;
     --orbit-caption: #586b80;
+    --orbit-monogram: #d6eceb;
+    --orbit-key-surface: #245d70;
+    --orbit-key-ink: #f5f8fc;
+    --orbit-pointer: #3fb9ad;
     color-scheme: light;
   }
 }
 @media (prefers-reduced-motion: reduce) {
   .orbit-radial-root * { animation: none !important; transition: none !important; }
+  .orbit-radial-sector.orbit-radial-active:not(.orbit-radial-disabled) { transform: none; }
 }
 @media (forced-colors: active) {
   .orbit-radial-disc { fill: Canvas !important; stroke: ButtonText !important; filter: none !important; }
@@ -268,8 +355,15 @@
   .orbit-radial-center.orbit-radial-active { background: Highlight; color: HighlightText; box-shadow: none; }
   .orbit-radial-center-icon { color: ButtonText; }
   .orbit-radial-center.orbit-radial-active .orbit-radial-center-icon { color: HighlightText; }
-  .orbit-radial-submenu-mark { fill: ButtonText; }
+  .orbit-radial-submenu-mark { stroke: ButtonText; }
+  .orbit-radial-monogram { fill: Canvas; stroke: ButtonText; }
+  .orbit-radial-monogram-label { fill: ButtonText; }
+  .orbit-radial-active .orbit-radial-monogram-label { fill: HighlightText; }
+  .orbit-radial-key-surface { fill: ButtonText; stroke: ButtonText; }
+  .orbit-radial-key-label { fill: Canvas; }
+  .orbit-radial-pointer { stroke: Highlight; }
+  .orbit-radial-command-pill { background: Canvas; color: CanvasText; border-color: ButtonText; box-shadow: none; }
+  .orbit-radial-command-detail, .orbit-radial-center-detail { color: CanvasText; }
   .orbit-radial-caption { color: ButtonText; }
-  .orbit-radial-command-label { background: Canvas; color: CanvasText; border-color: ButtonText; box-shadow: none; }
   .orbit-radial-menu:focus-visible .orbit-radial-center { outline-color: Highlight; }
 }

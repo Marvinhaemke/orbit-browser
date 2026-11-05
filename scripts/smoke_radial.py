@@ -506,6 +506,8 @@ def main():
             app_args=["-no-remote", "--remote-allow-system-access"],
             prefs={
                 "browser.startup.page": 0, "browser.startup.homepage": "about:blank",
+                # Radial gestures are verified against the full native toolbar.
+                "browser.orbit.focus.default": False,
                 # Actions state belongs to a BrowsingContext (driver.sys.mjs
                 # 268); down in content and up in chrome silently drops up.
                 # Exact-pin async dispatch (driver.sys.mjs171-184,
