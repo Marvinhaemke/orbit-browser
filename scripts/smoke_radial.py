@@ -104,15 +104,29 @@ def key(driver, value):
 
 
 def content_point_in_chrome(driver, element):
-    """Translate an actual remote document/frame element into widget pixels."""
-    point = driver.execute_script('''
-        const target = arguments[0];
-        target.scrollIntoView({block: "nearest", inline: "nearest"});
-        const box = target.getBoundingClientRect();
-        const win = target.ownerDocument.defaultView;
-        return {screenX: win.mozInnerScreenX + box.x + box.width / 2,
-            screenY: win.mozInnerScreenY + box.y + box.height / 2};
-    ''', script_args=[element])
+    """Translate an actual remote document/frame element into widget pixels.
+
+    Scrolling an element of a cross-origin frame into view also scrolls the
+    embedding page, asynchronously, and only then does the frame's screen
+    position change. Read the point until it is stable: a stale point makes the
+    trusted click miss its target (Firefox then reports a plain page context).
+    """
+    driver.execute_script('arguments[0].scrollIntoView({block: "nearest", inline: "nearest"});', script_args=[element])
+    previous = None
+    deadline = time.monotonic() + 3
+    while True:
+        point = driver.execute_script('''
+            const box = arguments[0].getBoundingClientRect();
+            const win = arguments[0].ownerDocument.defaultView;
+            return {screenX: win.mozInnerScreenX + box.x + box.width / 2,
+                screenY: win.mozInnerScreenY + box.y + box.height / 2};
+        ''', script_args=[element])
+        if point == previous:
+            break
+        if time.monotonic() > deadline:
+            raise AssertionError(f"Target never settled after scrolling into view: {previous} then {point}")
+        previous = point
+        time.sleep(0.1)
     driver.set_context("chrome")
     return driver.execute_script('''
         return {x: Math.round(arguments[0].screenX - window.mozInnerScreenX),
@@ -549,7 +563,9 @@ def main():
                         focusedElement: Services.focus.focusedElement?.localName,
                         focusedElementId: Services.focus.focusedElement?.id,
                         switching: switcher?.switchInProgress, paintId: switcher?.switchPaintId,
-                        visibleTab: switcher?.visibleTab?.label, requestedTab: switcher?.requestedTab?.label};
+                        visibleTab: switcher?.visibleTab?.label, requestedTab: switcher?.requestedTab?.label,
+                        tabs: [...gBrowser.tabs].map(tab => ({label: tab.label, uri: tab.linkedBrowser.currentURI.spec,
+                            selected: tab.selected, busy: tab.hasAttribute("busy")}))};
                 ''')
                 driver.set_context("content")
                 driver.switch_to_frame()
@@ -658,6 +674,9 @@ def run_checks(driver, handle, url, result, folder):
     wait_clipboard(driver, iframe_link)
     assert_context_cleanup(driver)
     page_menu(driver, handle, frame=True)
+    # Without a link context the center duplicates the page instead; say so.
+    target = driver.execute_script("return {onLink: !!gContextMenu?.onLink, link: gContextMenu?.linkURL || ''};")
+    assert target["onLink"] and target["link"] == iframe_link, f"The remote-frame right-click missed its link: {target}"
     left_click(driver, CENTER_ID)
     wait_for(driver, "return [...gBrowser.tabs].some(tab => tab.linkedBrowser.currentURI.spec === arguments[0]);", "remote-frame link opens in a real native tab", [iframe_link])
     assert_context_cleanup(driver)
