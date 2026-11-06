@@ -47,6 +47,8 @@ The canvas fills the whole page. Its sidebar and top bar float over it, so the w
 
 The sidebar's **Open tabs** tray lists every website open in the window, in tab-strip order. Each row shows the tab's icon, title, and site, plus a chip when the tab already has a card: the frame it sits in, or **Canvas**. Click the chip to pan to that card. Double-click a row or press Enter to switch to the tab. Its **×** (or Delete) closes the tab; a card for it stays on the canvas as a saved website you can reopen. Ctrl+click, Shift+click, Shift+arrow keys, and Ctrl+A select several tabs. Then **Add** places them loose on the canvas or in a frame you choose, and **Close** closes them. To place tabs where you want, drag rows onto the canvas, onto a frame in the sidebar's frame list, or onto **My canvas**. A tab never gets a second card: adding it again moves its existing card. Ctrl+Z undoes a placement.
 
+**Tab overview** shows every open website as a page preview. Open it with **O** on the canvas, the sidebar's **Tab overview** button, or **Tab overview** in Orbit commands. The board zooms out so your frames fit above a panel of previews. Drag a preview onto a frame, or a frame in the sidebar list, to file the tab there. Middle-click a preview or use its **×** to close the tab, and double-click it or press Enter to switch to it. Arrow keys move through the grid and Delete closes the focused tab. Escape, or **Done**, returns to the canvas where you left it. Tabs that are not loaded yet show their icon instead of a preview.
+
 ## Radial browser interaction
 
 - **Quick right-click on a webpage:** release the button to open page actions. **Open in new tab** sits in the center and uses the clicked link or image when available; otherwise it opens the current page in a new tab.
@@ -88,6 +90,7 @@ The source implements:
 - Draggable tab cards and named, resizable frames that open their tabs together.
 - An open-tabs tray for switching, closing, and dragging tabs onto the canvas or into frames.
 - Tab actions in the held tab wheel and Orbit commands: close a tab, or send it to the canvas or a frame.
+- A tab overview with live page previews beside your frames.
 - Editable sticky notes, connections, freehand drawing, and undo.
 - Radial webpage actions and a held right-button tab switcher, with nested groups and overflow.
 - A radial context menu on the canvas.

@@ -225,6 +225,8 @@ export class InteractionWindow {
   commands() {
     const commands = [
       { id: "action:canvas", kind: "command", label: "Open canvas", detail: "Your spatial tabs, frames, and notes", keywords: "board workspace", run: () => lazy.Orbit.openBoard(this.win) },
+      { id: "action:overview", kind: "command", label: "Tab overview", detail: "Every open tab as a preview beside your frames · O on the canvas",
+        keywords: "tabs previews grid sort organize expose", run: () => lazy.Orbit.openOverview(this.win) },
       { id: "action:focus", kind: "command", label: this.focusMode ? "Exit focus mode" : "Enter focus mode", detail: "Let browser controls recede · Alt+Shift+F", keywords: "restore toolbar distraction", run: () => this.setFocusMode(!this.focusMode) },
       focusModeDefault()
         ? { id: "action:focus-default", kind: "command", label: "Always start with the full toolbar",

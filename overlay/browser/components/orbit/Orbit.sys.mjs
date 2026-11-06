@@ -34,6 +34,12 @@ const COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
 const SHORTCUTS_PREF = "browser.orbit.newtab.shortcuts";
 const SHORTCUT_LIMIT = 8;
 const FAVICON_PATTERN = /^data:image\/(?:png|jpeg|gif|webp|x-icon|vnd\.microsoft\.icon);base64,[a-zA-Z0-9+/=]+$/;
+// Tab overview previews: small JPEG snapshots of a tab's visible page, drawn
+// by Firefox itself and kept only in this window's memory.
+const PREVIEW_PATTERN = /^data:image\/jpeg;base64,[a-zA-Z0-9+/=]+$/;
+const PREVIEW_WIDTH = 360;
+const PREVIEW_LIMIT = 262144;
+const PREVIEW_TTL = 20000;
 
 function identifier(value, label = "id") {
   if (typeof value !== "string" || !ID_PATTERN.test(value)) {
@@ -327,6 +333,8 @@ class OrbitWindow {
     this.captureToast = null;
     this.captureToastTimer = null;
     this.oldBrowserPosition = null;
+    this.previews = new WeakMap();
+    this.overviewRequested = false;
 
     // The browser-window bridge keeps the toolbar canvas contract. Native new
     // tabs receive separate bridges bound to their exact document and browser.
@@ -356,9 +364,10 @@ class OrbitWindow {
         if (this.peekPanel) {
           event.preventDefault();
           this.closePeek();
-        } else if (this.overlay && !this.overlay.hidden && !this.addressInUse()) {
+        } else if (this.overlay && !this.overlay.hidden && !this.addressInUse() && !this.overviewOpen()) {
           // While the address bar is in use over the canvas, Escape belongs to
-          // Firefox: it closes suggestions and reverts the edit first.
+          // Firefox: it closes suggestions and reverts the edit first. In the
+          // tab overview, Escape first returns to the canvas itself.
           event.preventDefault();
           this.hide();
         }
@@ -416,6 +425,15 @@ class OrbitWindow {
     expose("setShortcutsVisible", value => this.setShortcutsVisible(value));
     expose("focusAddress", value => this.focusAddress(value));
     expose("navigate", record => browser ? this.navigateCanvas(browser, record) : this.openTab(record));
+    expose("tabPreviews", tabIDs => this.tabPreviews(tabIDs));
+    if (!document) {
+      // Only the window's overlay canvas is asked to open the tab overview.
+      expose("consumeOverview", () => {
+        const requested = this.overviewRequested;
+        this.overviewRequested = false;
+        return requested;
+      });
+    }
     expose("subscribe", callback => {
       if (typeof callback !== "function") {
         throw new TypeError("Orbit subscription requires a function");
@@ -660,6 +678,78 @@ class OrbitWindow {
       moved ? (tabs.length === 1 ? `Moved to ${where}` : `Moved ${count(moved, "card")} to ${where}`) :
       frame ? `Already in ${where}` : "Already on your canvas");
     return result;
+  }
+
+  /** Small snapshots of open websites for the canvas's tab overview. A tab
+   * that has nothing to draw, such as one not yet loaded, keeps its icon. */
+  async tabPreviews(ids) {
+    if (!Array.isArray(ids) || !ids.length || ids.length > 100) {
+      throw new TypeError("Orbit requires 1 to 100 tab ids");
+    }
+    const results = [];
+    for (const id of new Set(ids)) {
+      const tab = this.findTab(id);
+      if (!tab || !isWebURL(tab.linkedBrowser?.currentURI?.spec)) continue;
+      try {
+        const preview = await this.tabPreview(tab);
+        if (preview) results.push({ id, preview });
+      } catch (error) {
+        console.debug?.("Orbit could not draw a tab preview", error);
+      }
+    }
+    return results;
+  }
+
+  async tabPreview(tab) {
+    const browser = tab.linkedBrowser;
+    const url = browser.currentURI.spec;
+    const cached = this.previews.get(tab);
+    if (cached && cached.url === url && Date.now() - cached.at < PREVIEW_TTL) return cached.data;
+    const global = !tab.hasAttribute?.("pending") && browser.browsingContext?.currentWindowGlobal;
+    if (typeof global?.drawSnapshot !== "function") return null;
+    const width = browser.clientWidth || this.win.gBrowser.selectedBrowser?.clientWidth || 1280;
+    const scale = Math.min(1, PREVIEW_WIDTH / Math.max(1, width));
+    // A null rectangle draws the page as it was last on screen; the top of
+    // the page is the fallback.
+    let bitmap;
+    try {
+      bitmap = await global.drawSnapshot(null, scale, "white");
+    } catch {
+      bitmap = await global.drawSnapshot(new this.win.DOMRect(0, 0, width, Math.round(width * .625)), scale, "white");
+    }
+    try {
+      const canvas = this.win.document.createElementNS(HTML_NS, "canvas");
+      canvas.width = Math.min(PREVIEW_WIDTH, bitmap.width);
+      canvas.height = Math.min(bitmap.height, Math.round(canvas.width * .625));
+      canvas.getContext("2d").drawImage(bitmap, 0, 0);
+      const data = canvas.toDataURL("image/jpeg", .72);
+      if (typeof data !== "string" || data.length > PREVIEW_LIMIT || !PREVIEW_PATTERN.test(data)) return null;
+      this.previews.set(tab, { url, at: Date.now(), data });
+      return data;
+    } finally {
+      bitmap.close?.();
+    }
+  }
+
+  overviewOpen() {
+    return this.frame?.contentDocument?.documentElement?.dataset?.orbitOverview === "true";
+  }
+
+  /** Opens the overlay canvas in its tab overview. */
+  openOverview() {
+    this.overviewRequested = true;
+    this.show();
+    // An overlay that is already loaded hears the request at once; a new one
+    // asks for it when it starts.
+    const overlay = this.frame?.contentDocument;
+    for (const listener of this.listeners) {
+      if (listener.document !== overlay) continue;
+      try {
+        listener(clone(this.listTabs()), { type: "overview" });
+      } catch (error) {
+        console.error("Orbit could not open the tab overview", error);
+      }
+    }
   }
 
   /** Closes live tabs. Their cards stay on the canvas as saved websites. */
@@ -1305,6 +1395,11 @@ export const Orbit = {
   sendTabsToCanvas(win, tabs, frameId = null) {
     this.init(win);
     return this._windows.get(win)?.sendTabsToCanvas(tabs, frameId);
+  },
+
+  openOverview(win) {
+    this.init(win);
+    this._windows.get(win)?.openOverview();
   },
 
   connectCanvas(canvasWindow) {

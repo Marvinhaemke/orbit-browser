@@ -555,6 +555,80 @@ test("native tabs sent from the browser file into a frame once and say where the
   Orbit.uninit(win);
 });
 
+test("tab previews are bounded JPEG snapshots of loaded websites, cached in memory", async () => {
+  const win = createWindow();
+  Orbit.openBoard(win);
+  const drawn = [];
+  const createElementNS = win.document.createElementNS;
+  win.document.createElementNS = function(ns, tag) {
+    if (tag !== "canvas") return createElementNS.call(this, ns, tag);
+    return { width: 0, height: 0, getContext: () => ({ drawImage(bitmap) { drawn.push(bitmap); } }),
+      toDataURL(type, quality) { return `data:${type};base64,${"A".repeat(12)}`; } };
+  };
+  const snapshotting = (tab, behavior = {}) => {
+    tab.linkedBrowser.clientWidth = 1440;
+    tab.linkedBrowser.browsingContext = { currentWindowGlobal: { async drawSnapshot(rect, scale, background) {
+      if (behavior.throws) throw new Error("not drawable");
+      behavior.calls = [...(behavior.calls || []), { rect, scale, background }];
+      return { width: 360, height: 300, close() { behavior.closed = true; } };
+    } } };
+    return behavior;
+  };
+  const loaded = nativeTab(win, "https://b.example/");
+  const drawing = snapshotting(loaded);
+  const pending = nativeTab(win, "https://c.example/");
+  snapshotting(pending);
+  pending.hasAttribute = name => name === "pending";
+  const broken = nativeTab(win, "https://d.example/");
+  snapshotting(broken, { throws: true });
+  const bridge = win.OrbitChrome;
+  const ids = Object.fromEntries(bridge.listTabs().map(tab => [tab.url, tab.id]));
+  const previews = await bridge.tabPreviews([ids["https://example.com/"], ids["https://b.example/"],
+    ids["https://c.example/"], ids["https://d.example/"], "orbit-missing"]);
+  assert.deepEqual(previews.map(entry => entry.id), [ids["https://b.example/"]], "only a loaded, drawable website gets a preview");
+  assert.match(previews[0].preview, /^data:image\/jpeg;base64,/);
+  assert.deepEqual(drawing.calls, [{ rect: null, scale: .25, background: "white" }], "the visible page at a small scale");
+  assert.equal(drawing.closed, true, "the snapshot bitmap is released");
+  await bridge.tabPreviews([ids["https://b.example/"]]);
+  assert.equal(drawing.calls.length, 1, "a fresh preview is reused");
+  await assert.rejects(() => bridge.tabPreviews([]), /1 to 100/);
+  Orbit.uninit(win);
+});
+
+test("Orbit commands' tab overview request reaches only the overlay canvas", () => {
+  const win = createWindow();
+  const tabCanvas = createCanvasTab(win);
+  const native = Orbit.connectCanvas(tabCanvas.canvas);
+  assert.equal(native.consumeOverview, undefined, "a new-tab canvas is never asked to open the overview");
+  const heard = [];
+  native.subscribe((tabs, change) => { if (change?.type === "overview") heard.push("tab"); });
+  Orbit.openOverview(win);
+  assert.equal(win.document.getElementById("orbit-canvas-overlay").hidden, false, "the overlay canvas opens");
+  const overlay = win.OrbitChrome;
+  overlay.subscribe((tabs, change) => { if (change?.type === "overview") heard.push("overlay"); });
+  assert.equal(overlay.consumeOverview(), true, "a canvas that starts after the request still sees it");
+  assert.equal(overlay.consumeOverview(), false, "the request is used once");
+  Orbit.openOverview(win);
+  assert.deepEqual(heard, ["overlay"]);
+
+  // In the overview, Escape belongs to the canvas page, which leaves the overview.
+  const escape = () => {
+    const event = Object.assign(new Event("keydown", { cancelable: true }), {
+      key: "Escape", altKey: false, shiftKey: false, ctrlKey: false, metaKey: false, repeat: false,
+    });
+    win.dispatchEvent(event);
+    return event;
+  };
+  const page = win.document.getElementById("orbit-canvas-frame").contentDocument;
+  page.documentElement = { dataset: { orbitOverview: "true" } };
+  assert.equal(escape().defaultPrevented, false);
+  assert.equal(win.document.getElementById("orbit-canvas-overlay").hidden, false, "Escape leaves the overview, not the canvas");
+  delete page.documentElement.dataset.orbitOverview;
+  assert.equal(escape().defaultPrevented, true);
+  assert.equal(win.document.getElementById("orbit-canvas-overlay").hidden, true, "outside the overview, Escape closes the canvas");
+  Orbit.uninit(win);
+});
+
 test("selected text captures a bounded plain note and source URL, never password content", () => {
   const win = createWindow();
   Orbit.openBoard(win);

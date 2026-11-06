@@ -361,6 +361,42 @@ def verify_tab_tray(driver, url, result):
     result["checks"].append("The canvas tray lists real tabs, files one into a frame, and closes it while its card and the canvas stay")
 
 
+def verify_tab_overview(driver, result, folder):
+    """Tab overview opens the overlay canvas with a tile per open website and
+    a real Gecko snapshot of a loaded page; Escape leaves only the overview."""
+    driver.set_context("chrome")
+    if canvas_visible(driver):
+        click_canvas_button(driver)
+        wait_for(driver, 'return document.getElementById("orbit-canvas-overlay").hidden;', "canvas closes before the overview")
+    driver.execute_script('ChromeUtils.importESModule("moz-src:///browser/components/orbit/Orbit.sys.mjs").Orbit.openOverview(window);')
+    wait_for(driver, '''
+        const doc = document.getElementById("orbit-canvas-frame")?.contentDocument;
+        const panel = doc?.getElementById("overview");
+        return !document.getElementById("orbit-canvas-overlay").hidden && panel && !panel.hidden &&
+            doc.documentElement.dataset.orbitOverview === "true" &&
+            doc.querySelectorAll(".overview-tile").length === window.OrbitChrome.listTabs().length;
+    ''', "Tab overview opens the overlay canvas with a tile per open website")
+    preview = wait_for(driver, '''
+        const doc = document.getElementById("orbit-canvas-frame").contentDocument;
+        const image = doc.querySelector('.overview-shot img[src^="data:image/jpeg;base64,"]');
+        return image?.complete && image.naturalWidth > 40 && image.naturalHeight > 20 ?
+            {width: image.naturalWidth, height: image.naturalHeight} : null;
+    ''', "Firefox draws a real snapshot of a loaded website for its tile", timeout=45)
+    (folder / "orbit-tab-overview.png").write_bytes(driver.screenshot(format="binary", full=False))
+    result["overview_screenshot"] = "orbit-tab-overview.png"
+    chord(driver, Keys.ESCAPE)
+    wait_for(driver, '''
+        const doc = document.getElementById("orbit-canvas-frame").contentDocument;
+        return doc.getElementById("overview").hidden && !doc.documentElement.dataset.orbitOverview;
+    ''', "Escape leaves the overview")
+    assert driver.execute_script('return !document.getElementById("orbit-canvas-overlay").hidden;'), \
+        "Escape in the overview closed the whole canvas"
+    chord(driver, Keys.ESCAPE)
+    wait_for(driver, 'return document.getElementById("orbit-canvas-overlay").hidden;', "a second Escape closes the canvas")
+    result["tab_overview"] = {"preview": preview}
+    result["checks"].append("Tab overview shows every open website with real Gecko snapshots; Escape returns to the canvas, then closes it")
+
+
 def verify_native_newtab_ux(driver, fixture_handle, url, result, folder):
     """Exercise the browser's real new-tab commands and isolated workspaces."""
     checks = result["checks"]
@@ -683,6 +719,7 @@ def main() -> None:
         verify_native_newtab_ux(driver, fixture_handle, url, result, report.parent)
         verify_overlay_launcher(driver, url, result)
         verify_tab_tray(driver, url, result)
+        verify_tab_overview(driver, result, report.parent)
 
         open_canvas(driver)
         driver.execute_script('window.OrbitChrome.peek({url: arguments[0]});', script_args=[url + "peek"])

@@ -125,6 +125,29 @@ img.tray-icon { object-fit: contain; background: none; border: 0; }
 #tray-add { color: var(--orbit-accent-ink); background: var(--orbit-accent-wash); }
 #tray-add:hover { background: color-mix(in srgb, var(--orbit-lagoon) 30%, transparent); }
 #tray-close { color: var(--orbit-muted); }
+/* Tab overview: the board fits above, every open tab waits below as a preview. */
+.overview { position: fixed; z-index: 18; left: var(--orbit-panel-left); right: var(--orbit-gutter); bottom: var(--orbit-gutter); max-height: min(46vh, 430px); display: flex; flex-direction: column; padding: 14px 16px 16px; border: 1px solid var(--orbit-highlight); border-radius: 26px; background: linear-gradient(145deg, var(--orbit-glass), color-mix(in srgb, var(--orbit-surface) 82%, transparent)); box-shadow: var(--orbit-glass-shadow); backdrop-filter: blur(22px) saturate(1.15); animation: orbit-emerge 220ms var(--orbit-spring); }
+.overview-head { display: flex; align-items: center; gap: 14px; margin: 0 4px 10px; }
+.overview-head h2 { margin: 0; font-size: 15px; font-weight: 650; letter-spacing: -.2px; display: flex; align-items: center; gap: 8px; }
+.overview-head h2 small { font-size: 10px; font-weight: 650; min-width: 22px; text-align: center; padding: 2px 6px; border-radius: 8px; background: var(--orbit-raised); border: 1px solid var(--orbit-highlight); }
+#overview-hint { flex: 1; margin: 0; font-size: 11px; color: var(--orbit-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#overview-done { padding: 8px 14px; }
+#overview-grid { flex: 0 1 auto; min-height: 0; overflow: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(176px, 1fr)); align-content: start; gap: 12px; padding: 4px 4px 6px; scrollbar-width: thin; scrollbar-color: var(--orbit-line) transparent; }
+.overview-tile { position: relative; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--orbit-highlight); border-radius: 16px; background: var(--orbit-raised); box-shadow: 4px 4px 12px var(--orbit-shadow), -3px -3px 9px var(--orbit-highlight); cursor: grab; user-select: none; transition: transform 200ms var(--orbit-spring), box-shadow 200ms ease; }
+.overview-tile:hover { transform: translateY(-2px); }
+.overview-tile[aria-selected="true"] { outline: 2px solid var(--orbit-lagoon); outline-offset: 2px; }
+.overview-tile:focus-visible { outline: 2px solid var(--orbit-focus); outline-offset: 2px; }
+.overview-tile.dragging { opacity: .5; }
+.overview-shot { aspect-ratio: 16 / 10; display: grid; place-items: center; overflow: hidden; background: linear-gradient(145deg, var(--orbit-surface), var(--orbit-base)); border-bottom: 1px solid var(--orbit-line); }
+.overview-shot img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top; }
+.overview-mark { width: 44px; height: 44px; border-radius: 14px; display: grid; place-items: center; font-size: 19px; font-weight: 650; color: var(--orbit-accent-ink); background: var(--orbit-raised); box-shadow: var(--orbit-raised-shadow); object-fit: contain; }
+img.overview-mark { padding: 10px; }
+.overview-meta { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 8px 10px 9px; font-size: 12px; }
+.overview-tile.active .tray-text strong::before { content: ""; display: inline-block; width: 6px; height: 6px; margin: 0 6px 1px 0; border-radius: 50%; background: var(--orbit-lagoon); }
+.overview-tile .tray-close { position: absolute; top: 6px; right: 6px; background: var(--orbit-glass); box-shadow: 1px 1px 4px var(--orbit-shadow); }
+.overview-tile:hover .tray-close, .overview-tile:focus-visible .tray-close, .overview-tile[aria-selected="true"] .tray-close { opacity: 1; }
+body.overview-mode .toolbar, body.overview-mode .canvas-hint, body.overview-mode .zoom-controls,
+body.overview-mode #tray-label, body.overview-mode #tab-tray { display: none; }
 .canvas-viewport.tab-drop { box-shadow: inset 0 0 0 3px color-mix(in srgb, var(--orbit-lagoon) 55%, transparent); }
 .frame.drop-target { border-width: 2.5px; background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 22%, transparent), transparent); }
 .sidebar-bottom { margin-top: auto; padding: 25px 12px 0; }
@@ -367,7 +390,7 @@ dialog input, dialog select { width: 100%; display: block; margin-top: 9px; bord
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
-  .card:hover, .button:hover:not(:disabled), .toolbar button:hover, .shortcut-open:hover { transform: none; }
+  .card:hover, .button:hover:not(:disabled), .toolbar button:hover, .shortcut-open:hover, .overview-tile:hover { transform: none; }
 }
 @media (forced-colors: active) {
   :root { --orbit-text: CanvasText; --orbit-muted: CanvasText; --orbit-base: Canvas; --orbit-canvas: Canvas; --orbit-surface: Canvas; --orbit-raised: Canvas; --orbit-line: ButtonBorder; --orbit-highlight: ButtonBorder; --orbit-accent-ink: LinkText; --orbit-focus: Highlight; --orbit-accent-wash: Canvas; }
@@ -376,7 +399,8 @@ dialog input, dialog select { width: 100%; display: block; margin-top: 9px; bord
   .sidebar, .board-bar, .card, .toolbar, .zoom-controls, .button, dialog, #radial, .radial-center, .frame, .note, .launcher, .shortcut-open, #radial button, kbd, .shortcuts-toggle, .shortcuts-show { background: Canvas; border-color: ButtonBorder; backdrop-filter: none; }
   #radial button .glyph { stroke: ButtonText; }
   .note textarea, .note-grip { color: CanvasText; }
-  .nav.active, .toolbar button[aria-pressed="true"], .tray-tab[aria-selected="true"] { outline: 1px solid Highlight; color: Highlight; }
+  .nav.active, .toolbar button[aria-pressed="true"], .tray-tab[aria-selected="true"], .overview-tile[aria-selected="true"] { outline: 1px solid Highlight; color: Highlight; }
+  .overview, .overview-tile { background: Canvas; border-color: ButtonBorder; backdrop-filter: none; }
   .frame-nav.drop-target, #fit-nav.drop-target, .frame.drop-target { outline: 2px dashed Highlight; }
   .button.primary { color: ButtonText; background: ButtonFace; }
   .orbit-logo { forced-color-adjust: auto; }
