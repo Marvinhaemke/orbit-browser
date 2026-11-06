@@ -319,13 +319,21 @@ def verify_tab_tray(driver, url, result):
             doc.querySelectorAll(".tray-tab").length === live.length &&
             doc.getElementById("open-count").textContent === String(live.length);
     '''.replace("arguments[0]", json.dumps(row)), "the tray lists every open website, including a background tab")
+    # window.OrbitChrome is the overlay canvas's own bridge, and a canvas is
+    # never sent its own saves. Save as browser chrome, so the visible overlay
+    # hears about the new frame the way it hears about any other canvas's edit.
     driver.execute_script('''
-        const board = window.OrbitChrome.getBoard();
+        const state = ChromeUtils.importESModule("moz-src:///browser/components/orbit/Orbit.sys.mjs").Orbit._windows.get(window);
+        const board = state.getBoard();
         if (!board.frames.some(frame => frame.id === "smoke-tray-frame")) {
             board.frames.push({id: "smoke-tray-frame", title: "Tray frame", color: "#70ded3", x: 3000, y: 3000, w: 600, h: 400});
-            window.OrbitChrome.saveBoard(board);
+            state.saveBoard(board);
         }
     ''')
+    wait_for(driver, '''
+        const doc = document.getElementById("orbit-canvas-frame").contentDocument;
+        return [...doc.querySelectorAll("#frame-list .frame-nav")].some(nav => nav.textContent.includes("Tray frame"));
+    ''', "the overlay canvas hears about a frame added by browser chrome")
     click_in_canvas(driver, row, "tray row for the background tab")
     wait_for(driver, '''
         const doc = document.getElementById("orbit-canvas-frame").contentDocument;

@@ -611,6 +611,19 @@ test("Orbit commands' tab overview request reaches only the overlay canvas", () 
   Orbit.openOverview(win);
   assert.deepEqual(heard, ["overlay"]);
 
+  // The window bridge is the overlay's own: its saves are not echoed back,
+  // while a save by browser chrome reaches the overlay like any other edit.
+  const boards = [];
+  overlay.subscribe((tabs, change) => { if (change?.type === "board-changed") boards.push(change.board.frames.length); });
+  overlay.saveBoard({ version: 1, camera: { x: 0, y: 0, zoom: 1 }, items: [], connections: [], strokes: [],
+    frames: [{ id: "own", title: "Own", color: "#8c86f4", x: 0, y: 0, w: 300, h: 200 }] });
+  assert.deepEqual(boards, [], "the overlay keeps its own undo history");
+  const state = Orbit._windows.get(win);
+  const board = state.getBoard();
+  board.frames.push({ id: "chrome", title: "Chrome", color: "#70ded3", x: 400, y: 0, w: 300, h: 200 });
+  state.saveBoard(board);
+  assert.deepEqual(boards, [2], "browser chrome's save reaches the overlay");
+
   // In the overview, Escape belongs to the canvas page, which leaves the overview.
   const escape = () => {
     const event = Object.assign(new Event("keydown", { cancelable: true }), {
