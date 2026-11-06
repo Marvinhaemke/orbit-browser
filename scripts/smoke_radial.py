@@ -355,6 +355,15 @@ def held_tabs(driver, handle):
     return state
 
 
+def wait_tab_actions(driver, tab_id):
+    """A pause on a wheel tab fans out its own Close and Send to canvas actions."""
+    wait_for(driver, '''
+        return [...document.getElementById(arguments[0]).querySelectorAll("[data-orbit-id]")]
+            .some(node => node.dataset.orbitId === arguments[1]);
+    ''', "a pause on a tab fans out its own actions", [ROOT_ID, tab_id + "-close"], timeout=5)
+    settle_radial(driver)
+
+
 def assert_max_eight(driver):
     rings = {}
     for item in radial_state(driver)["items"]:
@@ -766,6 +775,8 @@ def run_checks(driver, handle, url, result, folder):
         ''', "hovering native group opens its tab ring", [ROOT_ID])
         leaf = find_item(driver, lambda item: "group-10-tab-12" in item["label"], "last tab in native collapsed group")
         hover_node(driver, leaf["id"])
+        wait_tab_actions(driver, leaf["id"])
+        hover_node(driver, leaf["id"])
         assert native_tab_count(driver) == before
         assert driver.execute_script("return gBrowser.selectedBrowser.currentURI.spec;") == selected_before, "Hovering switched the selected tab"
         rings = assert_max_eight(driver)
@@ -794,7 +805,9 @@ def run_checks(driver, handle, url, result, folder):
     ''', "native group fan opens before testing its blank arc", [ROOT_ID])
     leaf = find_item(driver, lambda item: "group-10-tab-12" in item["label"], "nested leaf before blank fan release")
     hover_node(driver, leaf["id"])
-    settle_radial(driver)
+    # Let the leaf's own action fan open first, so the blank arc is measured
+    # on the rings that will actually be on screen at release.
+    wait_tab_actions(driver, leaf["id"])
     point = blank_fan_point(driver, held=True)
     selected_before = driver.execute_script("return gBrowser.selectedBrowser.currentURI.spec;")
     before = native_tab_count(driver)
@@ -814,6 +827,44 @@ def run_checks(driver, handle, url, result, folder):
     wait_for(driver, "return gBrowser.selectedBrowser.currentURI.spec === arguments[0];", "held release selects ungrouped tab", [url + "tab-switch-target"])
     assert_tab_release_cleanup(driver)
     checks.append("Ungrouped real Firefox tabs remain reachable through the same held gesture")
+
+    # A tab's own actions: release on Close tab, and Delete while held.
+    driver.set_context("chrome")
+    driver.execute_script('''
+        for (const name of ["wheel-close", "wheel-delete"]) {
+            gBrowser.addWebTab(arguments[0] + name, {inBackground: true, skipAnimation: true});
+        }
+    ''', script_args=[url])
+    wait_for(driver, '''
+        return ["wheel-close", "wheel-delete"].every(name => gBrowser.tabs.some(tab => tab.label === "Orbit radial " + name));
+    ''', "disposable tabs for the wheel's tab actions", timeout=45)
+    held_tabs(driver, handle)
+    selected_before = driver.execute_script("return gBrowser.selectedBrowser.currentURI.spec;")
+    target = find_item(driver, lambda item: item["label"] == "Orbit radial wheel-close", "disposable tab to close")
+    hover_node(driver, target["id"])
+    wait_tab_actions(driver, target["id"])
+    assert driver.execute_script("return gBrowser.selectedBrowser.currentURI.spec;") == selected_before, "Pausing on a tab switched to it"
+    screenshot(driver, folder, "radial-tab-actions", result["screenshots"])
+    hover_node(driver, target["id"] + "-close")
+    right_up(driver)
+    wait_for(driver, 'return !gBrowser.tabs.some(tab => !tab.closing && tab.label === "Orbit radial wheel-close");',
+             "releasing on Close tab closes that real tab")
+    assert driver.execute_script("return gBrowser.selectedBrowser.currentURI.spec;") == selected_before, "Closing a background tab switched tabs"
+    assert_tab_release_cleanup(driver)
+    held_tabs(driver, handle)
+    target = find_item(driver, lambda item: item["label"] == "Orbit radial wheel-delete", "disposable tab for Delete")
+    hover_node(driver, target["id"])
+    key(driver, Keys.DELETE)
+    wait_for(driver, 'return !gBrowser.tabs.some(tab => !tab.closing && tab.label === "Orbit radial wheel-delete");',
+             "Delete closes the hovered tab while the right button is held")
+    state = radial_state(driver)
+    assert state["visible"] and state["held"], f"Delete closed the wheel along with the tab: {state}"
+    assert not any("wheel-delete" in item["label"] for item in state["items"]), state
+    key(driver, Keys.ESCAPE)
+    right_up(driver)
+    assert_tab_release_cleanup(driver)
+    assert driver.execute_script("return gBrowser.selectedBrowser.currentURI.spec;") == selected_before
+    checks.append("A pause on a wheel tab fans out Close tab and Send to canvas; releasing on Close tab, or Delete while held, closes that real tab")
 
     held_tabs(driver, handle)
     group = find_item(driver, lambda item: "Orbit Native Group 10" in item["label"], "native group containing Firefox settings")

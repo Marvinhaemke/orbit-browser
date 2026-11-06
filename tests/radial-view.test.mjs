@@ -217,6 +217,9 @@ test("common native page actions get distinct descriptive glyphs instead of firs
     "orbit-canvas-link": "link", "orbit-canvas-selection": "note", "orbit-focus-history": "clock",
     "orbit-focus-settings": "gear", "orbit-focus-extensions": "puzzle", "orbit-focus-exit": "expand",
     "orbit-focus-new-tab": "plus", "orbit-focus-tabs": "tab", "orbit-radial-current-tab": "tab",
+    "orbit-radial-tab-3-close": "close", "orbit-radial-tab-3-canvas": "canvas",
+    "orbit-radial-tab-3-canvas-loose": "canvas", "orbit-radial-tab-3-canvas-frame-orbit-1": "frame",
+    "orbit-canvas-page-loose": "canvas", "orbit-canvas-link-frame-orbit-1": "frame",
   };
   for (const [id, glyph] of Object.entries(expected)) assert.equal(glyphName({id, label: id}), glyph, id);
   assert.equal(glyphName({id: "orbit-more-0-3", icon: "•••", children: [{id: "x"}]}), "more");
@@ -235,6 +238,8 @@ test("tab monograms name the site rather than its subdomain or registry suffix",
 test("hover captions add plain context: host, tab counts, options and availability", () => {
   assert.equal(radialDetail({kind: "tab", description: "https://mail.example.com/inbox?id=1"}), "mail.example.com");
   assert.equal(radialDetail({kind: "tab", description: "about:preferences"}), "about:preferences");
+  assert.equal(radialDetail({kind: "tab", description: "https://mail.example.com/", actionable: true, children: [{id: "c"}]}),
+    "mail.example.com · Pause for actions");
   assert.equal(radialDetail({kind: "group", collapsed: true, children: [{id: "a"}, {id: "b"}]}), "2 tabs · collapsed");
   assert.equal(radialDetail({kind: "submenu", children: [{id: "a"}]}), "1 option");
   assert.equal(radialDetail({kind: "submenu", children: [{id: "p", kind: "placeholder"}]}), "Loading options…");

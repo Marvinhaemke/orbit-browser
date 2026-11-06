@@ -18,12 +18,14 @@ class View {
   destroy() { this.model = null; this.destroyed = true; }
 }
 const captures = [];
+const sentTabs = [];
 let canvasFrames = [];
 const modules = { OrbitRadialView: View, Orbit: {
   captureContext(win, context, kind, frameId = null) {
     captures.push(frameId === null ? { win, context, kind } : { win, context, kind, frameId });
   },
   getFrames: () => canvasFrames,
+  sendTabsToCanvas(win, tabs, frameId = null) { sentTabs.push({ win, tabs, frameId }); },
 }, OrbitInteractions: { dismissTools(win) { win.focusToolsOpen = false; } } };
 globalThis.ChromeUtils = {
   defineESModuleGetters(target, getters) {
@@ -35,7 +37,8 @@ globalThis.JSWindowActorChild = class {};
 globalThis.JSWindowActorParent = class {};
 const load = async name => import(`data:text/javascript;base64,${Buffer.from(await readFile(
   new URL(`../overlay/browser/components/orbit/${name}.sys.mjs`, import.meta.url), "utf8")).toString("base64")}`);
-const { OrbitRadial, buildTabTree, snapshotNativeMenu, executeNativeCommand, canvasCaptureActions, flatCaptureActions } = await load("OrbitRadial");
+const { OrbitRadial, buildTabTree, snapshotNativeMenu, executeNativeCommand, canvasCaptureActions, flatCaptureActions,
+  tabActionItems, TAB_ACTION_DWELL } = await load("OrbitRadial");
 modules.OrbitRadial = OrbitRadial;
 const { OrbitRadialParent } = await load("OrbitRadialParent");
 const { OrbitRadialChild } = await load("OrbitRadialChild");
@@ -53,8 +56,16 @@ class NativeNode extends EventTarget {
   doCommand() { this.commands++; this.action?.(); }
 }
 
+class RecordingTarget extends EventTarget {
+  constructor() { super(); this.listeners = []; }
+  addEventListener(type, callback, options) {
+    this.listeners.push({ type, callback });
+    super.addEventListener(type, callback, options);
+  }
+}
+
 function fixture() {
-  const win = new EventTarget();
+  const win = new RecordingTarget();
   const popup = new NativeNode("menupopup", "contentAreaContextMenu");
   const copy = new NativeNode("menuitem", "context-copylink", "Copy link");
   const selectAll = new NativeNode("menuitem", "context-selectall", "Select All");
@@ -90,6 +101,13 @@ function fixture() {
     getTabForBrowser(value) { return this.openTabs.find(tab => tab.linkedBrowser === value); },
     duplicateTab(value) {
       const copyTab = { ...value }; this.openTabs.push(copyTab); return copyTab;
+    },
+    removed: [],
+    removeTab(tab, options) {
+      this.removed.push({ tab, options });
+      this.openTabs = this.openTabs.filter(candidate => candidate !== tab);
+      if (tab === selected) this.selectedTab = this.openTabs[0];
+      this.tabContainer.dispatchEvent(new Event("TabClose"));
     },
   };
   browser.ownerDocument = { defaultView: win };
@@ -573,4 +591,90 @@ test("menu snapshot carries Firefox's single-character access keys and ignores m
   popup.append(tab, long, none);
   const snapshot = snapshotNativeMenu(popup, { identify: () => "generated", elements: new Map(), populated: new Set() });
   assert.deepEqual(snapshot.map(item => item.accesskey), ["T", undefined, undefined]);
+});
+
+const trustedKey = (f, key) => {
+  const event = { isTrusted: true, key, prevented: false, preventDefault() { this.prevented = true; }, stopPropagation() {} };
+  for (const listener of f.win.listeners.filter(entry => entry.type === "keydown")) listener.callback(event);
+  return event;
+};
+
+test("each wheel tab carries Close, and websites Send to canvas, behind a dwell", () => {
+  canvasFrames = [];
+  try {
+    assert.deepEqual(tabActionItems("t", { web: false }).map(item => item.id), ["t-close"]);
+    assert.deepEqual(tabActionItems("t", { web: true }).map(item => [item.id, item.kind]),
+      [["t-close", "tab-action"], ["t-canvas", "tab-action"]]);
+    const frames = Array.from({ length: 30 }, (_, index) => ({ id: `f${index}`, title: index ? `Frame ${index}` : "" }));
+    const fanned = tabActionItems("t", { web: true, frames })[1];
+    assert.equal(fanned.kind, "submenu");
+    assert.equal(fanned.children.length, 25, "On the canvas plus at most 24 frames");
+    assert.deepEqual(fanned.children.slice(0, 2).map(item => [item.id, item.label, item.frameId ?? null]),
+      [["t-canvas-loose", "On the canvas", null], ["t-canvas-frame-f0", "Untitled frame", "f0"]]);
+
+    const f = fixture(); down(f);
+    const [first, settings] = f.view.model.items;
+    for (const tab of [first, settings]) {
+      assert.equal(tab.kind, "tab"); assert.equal(tab.actionable, true); assert.equal(tab.dwell, TAB_ACTION_DWELL);
+    }
+    assert.deepEqual(first.children.map(item => item.label), ["Close tab", "Send to canvas"]);
+    assert.deepEqual(settings.children.map(item => item.label), ["Close tab"], "a non-website tab cannot become a card");
+    OrbitRadial.uninit(f.win);
+  } finally {
+    canvasFrames = [];
+  }
+});
+
+test("a tab action runs by id: Close removes the tab and the frame comes from the saved board", () => {
+  canvasFrames = [{ id: "reading", title: "Reading" }];
+  sentTabs.length = 0;
+  try {
+    const f = fixture(); down(f);
+    const frameAction = f.view.model.items[0].children[1].children[1];
+    assert.equal(frameAction.frameId, "reading");
+    f.view.hit = { ...frameAction, frameId: "forged" };
+    up(f, 220, 100);
+    assert.equal(sentTabs.length, 1);
+    assert.equal(sentTabs[0].tabs[0], f.first);
+    assert.equal(sentTabs[0].frameId, "reading", "the activated item's frame id is ignored");
+    assert.equal(f.view.model, null, "the wheel closes after a released action");
+
+    down(f);
+    f.view.hit = { id: "orbit-radial-tab-999-close", kind: "tab-action", label: "Close tab" };
+    up(f, 220, 100);
+    assert.equal(f.win.gBrowser.removed.length, 0, "an unknown action id closes nothing");
+
+    down(f);
+    f.view.hit = f.view.model.items[1].children[0];
+    up(f, 220, 100);
+    assert.deepEqual(f.win.gBrowser.removed.map(entry => [entry.tab, entry.options.animate]), [[f.second, true]]);
+    assert.equal(f.win.gBrowser.selectedTab, f.first);
+    OrbitRadial.uninit(f.win);
+  } finally {
+    canvasFrames = [];
+  }
+});
+
+test("Delete closes the hovered tab and keeps the wheel; closing the current tab ends it", async () => {
+  canvasFrames = [];
+  const f = fixture();
+  const third = { label: "Third", linkedBrowser: { currentURI: { spec: "https://third.test/" } } };
+  f.win.gBrowser.openTabs.push(third);
+  down(f);
+  f.view.active = { node: f.view.model.items.find(node => node.label === "Settings") };
+  const event = trustedKey(f, "Delete");
+  assert.equal(event.prevented, true);
+  assert.deepEqual(f.win.gBrowser.removed.map(entry => [entry.tab, entry.options.animate]), [[f.second, false]]);
+  assert.ok(f.view.model, "the wheel stays open for the next tab");
+  await Promise.resolve();
+  assert.deepEqual(f.view.model.items.map(node => node.label), ["First", "Third"]);
+
+  f.view.active = { node: { id: "orbit-radial-command-1", kind: "native-command" } };
+  assert.equal(trustedKey(f, "Delete").prevented, false, "Delete over a command is left alone");
+
+  f.view.active = { node: f.view.model.items[0] };
+  trustedKey(f, "Delete");
+  assert.equal(f.win.gBrowser.removed.at(-1).tab, f.first);
+  assert.equal(f.view.model, null, "closing the page that holds the gesture ends the wheel");
+  OrbitRadial.uninit(f.win);
 });

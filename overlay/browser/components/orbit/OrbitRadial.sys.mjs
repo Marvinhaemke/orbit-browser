@@ -27,6 +27,26 @@ function captureURL(value) {
 }
 
 const FRAME_TARGET_LIMIT = 24;
+// A tab's own actions open only after a deliberate pause on it, so sweeping
+// across the wheel to reach a tab never fans out every tab on the way.
+export const TAB_ACTION_DWELL = 550;
+
+/** Close and Send to canvas for one tab in the tab wheel. Websites can go
+ * loose onto the canvas or into one of up to 24 frames. */
+export function tabActionItems(id, { web = false, frames = [] } = {}) {
+  const items = [{ id: `${id}-close`, label: "Close tab", kind: "tab-action", action: "close" }];
+  if (!web) return items;
+  const send = { id: `${id}-canvas`, label: "Send to canvas", kind: "tab-action", action: "canvas" };
+  const targets = (Array.isArray(frames) ? frames : []).slice(0, FRAME_TARGET_LIMIT);
+  items.push(targets.length ? {
+    id: `${id}-canvas`, label: "Send to canvas", kind: "submenu", children: [
+      { ...send, id: `${id}-canvas-loose`, label: "On the canvas" },
+      ...targets.map(frame => ({ ...send, id: `${id}-canvas-frame-${frame.id}`,
+        label: frame.title || "Untitled frame", frameId: frame.id })),
+    ],
+  } : send);
+  return items;
+}
 
 /** Availability comes only from Firefox's initialized context descriptor.
  * Commands revalidate that descriptor again when activated. When the canvas
@@ -120,14 +140,18 @@ export function snapshotNativeMenu(popup, { identify, elements, populated }) {
 
 /** Groups come from Firefox, including hidden/collapsed and non-HTTP tabs.
  * The pinned bucket is presentation only; this never mutates native groups. */
-export function buildTabTree(gBrowser, identifyTab, identifyGroup) {
+export function buildTabTree(gBrowser, identifyTab, identifyGroup, decorate = null) {
   const tabs = Array.from(gBrowser.openTabs || gBrowser.tabs).filter(tab => !tab.closing);
-  const leaf = tab => ({
-    id: identifyTab(tab), label: tab.label || "New tab", kind: "tab",
-    description: tab.linkedBrowser.currentURI?.spec || "",
-    favicon: tab.getAttribute?.("image") || "", tabIndex: tabs.indexOf(tab),
-    checked: tab === gBrowser.selectedTab,
-  });
+  const leaf = tab => {
+    const item = {
+      id: identifyTab(tab), label: tab.label || "New tab", kind: "tab",
+      description: tab.linkedBrowser.currentURI?.spec || "",
+      favicon: tab.getAttribute?.("image") || "", tabIndex: tabs.indexOf(tab),
+      checked: tab === gBrowser.selectedTab,
+    };
+    decorate?.(tab, item);
+    return item;
+  };
   const pinned = tabs.filter(tab => tab.pinned);
   const result = pinned.length ? [{
     id: "orbit-radial-pinned", label: "Pinned tabs", kind: "group", icon: "⌖",
@@ -184,6 +208,7 @@ class RadialWindow {
     this.mode = null;
     this.elements = new Map();
     this.tabElements = new Map();
+    this.tabActions = new Map();
     this.populated = new Set();
     this.identities = new WeakMap();
     this.identitySerial = 0;
@@ -204,6 +229,7 @@ class RadialWindow {
     }, true);
     this._listen(win, "keydown", event => {
       if (event.isTrusted && event.key === "Escape" && this.gesture?.down) this.dismiss("escape");
+      else if (event.isTrusted && event.key === "Delete" && this.mode === "tabs") this._deleteHoveredTab(event);
     }, true);
     this._listen(win, "blur", () => this.dismiss("blur"));
     this.observer = new win.MutationObserver(() => this._queueRefresh());
@@ -225,11 +251,22 @@ class RadialWindow {
 
   _tabItems() {
     this.tabElements.clear();
+    this.tabActions.clear();
+    const frames = this._canvasFrames();
     return buildTabTree(this.win.gBrowser, tab => {
       const id = this._identify(tab, "tab");
       this.tabElements.set(id, tab);
       return id;
-    }, group => this._identify(group, "group"));
+    }, group => this._identify(group, "group"), (tab, item) => {
+      // Releasing on the tab still switches to it; its actions wait for a dwell.
+      item.actionable = true;
+      item.dwell = TAB_ACTION_DWELL;
+      item.children = tabActionItems(item.id, { web: captureURL(item.description), frames });
+      // Activation looks actions up by id; the frame comes from the saved board.
+      for (const action of item.children.flatMap(child => child.children || [child])) {
+        this.tabActions.set(action.id, { tab, action: action.action, frameId: action.frameId ?? null });
+      }
+    });
   }
 
   _contextItems() {
@@ -396,7 +433,8 @@ class RadialWindow {
     this.view.updatePointer(point.screenX, point.screenY);
     const hit = this.view.hitTest(point.screenX, point.screenY);
     const moved = Math.hypot(point.screenX - gesture.center.screenX, point.screenY - gesture.center.screenY) > 10;
-    if (moved && hit?.kind === "tab" && this.tabElements.has(hit.id)) {
+    if (moved && ((hit?.kind === "tab" && this.tabElements.has(hit.id)) ||
+        (hit?.kind === "tab-action" && this.tabActions.has(hit.id)))) {
       this._suppressContext(gesture.browser);
       this._activate(hit);
     } else if (moved && hit?.children?.length) {
@@ -422,12 +460,17 @@ class RadialWindow {
   }
 
   _activate(item, event = null) {
-    if (!item || item.disabled || item.children?.length) return;
+    if (!item || item.disabled) return;
     if (item.kind === "tab") {
       const tab = this.tabElements.get(item.id);
       if (!tab || !this.win.gBrowser.openTabs.includes(tab) || tab.closing) return;
       this.win.gBrowser.selectedTab = tab;
       this.dismiss("tab-activated");
+      return;
+    }
+    if (item.children?.length) return;
+    if (item.kind === "tab-action") {
+      this._runTabAction(this.tabActions.get(item.id));
       return;
     }
     if (!this.context || this.context !== this.win.gContextMenu ||
@@ -463,6 +506,33 @@ class RadialWindow {
       this.executing = false;
       this.dismiss("command");
     }
+  }
+
+  _runTabAction(action, keepOpen = false) {
+    const tab = action?.tab;
+    if (!tab || !this.win.gBrowser.openTabs.includes(tab) || tab.closing) return;
+    // A tab the wheel closes may be the selected one; that TabSelect is ours.
+    this.executing = true;
+    try {
+      if (action.action === "close") this.win.gBrowser.removeTab(tab, { animate: !keepOpen });
+      else if (action.action === "canvas") lazy.Orbit.sendTabsToCanvas(this.win, [tab], action.frameId);
+    } catch (error) {
+      console.error("Orbit tab action failed", error);
+    } finally {
+      this.executing = false;
+      if (!keepOpen) this.dismiss("tab-action");
+    }
+  }
+
+  /** Delete closes the hovered tab and keeps the wheel open for the next one. */
+  _deleteHoveredTab(event) {
+    const node = this.view.active?.node;
+    if (node?.kind !== "tab" || !this.tabElements.has(node.id)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const tab = this.tabElements.get(node.id);
+    // The held gesture belongs to the selected page, so closing it ends the wheel.
+    this._runTabAction({ tab, action: "close" }, tab !== this.win.gBrowser.selectedTab);
   }
 
   _ancestorsVisible(node) {

@@ -635,6 +635,33 @@ class OrbitWindow {
     return { board: this.saveBoard(board, source), added, moved: tabs.length - added };
   }
 
+  /** Browser-chrome entry for native tabs: the tab wheel and Orbit commands
+   * send tabs here, and a toast says where their cards went. */
+  sendTabsToCanvas(tabs, frameId = null) {
+    if (!Array.isArray(tabs) || !tabs.length || tabs.length > 100 ||
+        tabs.some(tab => !this.win.gBrowser.tabs.includes(tab) || tab.closing)) {
+      throw new TypeError("Orbit requires 1 to 100 open tabs");
+    }
+    const board = this.getBoard() || emptyBoard();
+    const frame = frameId === null ? null : board.frames.find(candidate => candidate.id === frameId);
+    if (frameId !== null && !frame) throw new TypeError("Unknown Orbit frame");
+    // What each tab's card looked like before, for the toast.
+    const settled = tabs.filter(tab => {
+      if (!isWebURL(tab.linkedBrowser?.currentURI?.spec)) return false;
+      const { item, existing } = this.cardForTab(clone(board), tab);
+      return existing && (!frame || item.frameId === frame.id);
+    }).length;
+    const result = this.placeTabs({ tabIds: tabs.map(tab => this.tabID(tab)), ...(frame ? { frameId: frame.id } : {}) });
+    const where = frame ? `“${frame.title || "Untitled frame"}”` : "your canvas";
+    const moved = result.moved - settled;
+    const count = (value, noun) => `${value} ${noun}${value === 1 ? "" : "s"}`;
+    this.showCaptureToast(result.added && moved ? `Added ${result.added} and moved ${moved} to ${where}` :
+      result.added ? (tabs.length === 1 ? `Card added to ${where}` : `Added ${count(result.added, "tab")} to ${where}`) :
+      moved ? (tabs.length === 1 ? `Moved to ${where}` : `Moved ${count(moved, "card")} to ${where}`) :
+      frame ? `Already in ${where}` : "Already on your canvas");
+    return result;
+  }
+
   /** Closes live tabs. Their cards stay on the canvas as saved websites. */
   closeTabs(ids) {
     if (!Array.isArray(ids) || !ids.length || ids.length > 100) {
@@ -1273,6 +1300,11 @@ export const Orbit = {
   closeTabs(win, ids) {
     this.init(win);
     return this._windows.get(win)?.closeTabs(ids);
+  },
+
+  sendTabsToCanvas(win, tabs, frameId = null) {
+    this.init(win);
+    return this._windows.get(win)?.sendTabsToCanvas(tabs, frameId);
   },
 
   connectCanvas(canvasWindow) {

@@ -51,6 +51,7 @@ The sidebar's **Open tabs** tray lists every website open in the window, in tab-
 
 - **Quick right-click on a webpage:** release the button to open page actions. **Open in new tab** sits in the center and uses the clicked link or image when available; otherwise it opens the current page in a new tab.
 - **Hold the right button:** the tab wheel appears on button down. Move onto a tab and release to switch to it. Releasing without choosing a tab opens page actions.
+- **Pause on a tab:** after about half a second, a small fan opens beside it with **Close tab** and, for websites, **Send to canvas** (which fans out into **On the canvas** and your frames). Release on one to run it. Releasing on the tab itself still switches to it. While the wheel is open, **Delete** closes the hovered tab and keeps the wheel open for the next one.
 - **Hover a submenu:** a compact fan opens outside the item you hovered. Its options stay near their parent rather than filling the entire outer ring. Native tab groups and **More** work the same way, including further layers. Each ring contains at most eight options.
 - **Escape:** move back one layer, then dismiss. Arrow keys and Enter also navigate the menu. Clicking outside dismisses it.
 - **Keyboard letters:** Firefox's own context-menu access keys work in the wheel (for example **T** opens a link in a new tab), including commands paged behind **More**. While you use the keyboard, each circle shows its key. Typing a letter without an access key highlights the next matching command.
@@ -61,7 +62,7 @@ The page wheel uses Firefox’s actual context commands for links, images, selec
 
 ## Connected browsing
 
-**Orbit commands** opens from its toolbar button or **Ctrl + Shift + Space** (**Command + Shift + Space** on macOS). Search open tabs and saved frames, then use the arrow keys and Enter to jump to a result. The same command bar opens the canvas and toggles focus mode. Escape dismisses it and returns focus to your previous control.
+**Orbit commands** opens from its toolbar button or **Ctrl + Shift + Space** (**Command + Shift + Space** on macOS). Search open tabs and saved frames, then use the arrow keys and Enter to jump to a result. With a tab chosen, **Ctrl + Enter** (**Command + Enter**) adds it to the canvas, **Alt + Enter** lists the canvas and its frames so you can file it into one, and **Shift + Delete** closes it. Each tab row also has buttons for these. The command bar stays open after each of them, so you can tidy several tabs in a row. The same command bar opens the canvas and toggles focus mode. Escape dismisses it and returns focus to your previous control.
 
 **Send to canvas** in a webpage's radial menu collects the page, a clicked link, or selected text. When the workspace has frames, each capture fans out into **On the canvas** and up to 24 frames, so a capture can go straight into a frame; a card that already exists moves there instead of being duplicated. Cards keep the website's address and container; text becomes an editable note with its source address. Collecting a link does not create another browser tab. Captures join the current window's workspace, and private captures stay in memory.
 
@@ -86,6 +87,7 @@ The source implements:
 - A pan-and-zoom canvas populated from real browser tabs.
 - Draggable tab cards and named, resizable frames that open their tabs together.
 - An open-tabs tray for switching, closing, and dragging tabs onto the canvas or into frames.
+- Tab actions in the held tab wheel and Orbit commands: close a tab, or send it to the canvas or a frame.
 - Editable sticky notes, connections, freehand drawing, and undo.
 - Radial webpage actions and a held right-button tab switcher, with nested groups and overflow.
 - A radial context menu on the canvas.

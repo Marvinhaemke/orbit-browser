@@ -526,6 +526,35 @@ test("Send to canvas can file a page in a chosen frame and moves an existing car
   Orbit.uninit(win);
 });
 
+test("native tabs sent from the browser file into a frame once and say where they went", () => {
+  const win = createWindow();
+  Orbit.openBoard(win);
+  const tab = nativeTab(win, "https://b.example/");
+  const other = nativeTab(win, "https://c.example/");
+  win.OrbitChrome.saveBoard(frameBoard([
+    { id: "reading", x: 0, y: 0, w: 560, h: 340, title: "Reading" },
+    { id: "later", x: 1000, y: 0, w: 560, h: 340, title: "Later" },
+  ]));
+  const toast = () => win.document.getElementById("orbit-capture-toast").textContent;
+  assert.equal(Orbit.sendTabsToCanvas(win, [tab], "reading").added, 1);
+  assert.match(toast(), /Card added to “Reading”/);
+  Orbit.sendTabsToCanvas(win, [tab], "reading");
+  assert.match(toast(), /Already in “Reading”/);
+  Orbit.sendTabsToCanvas(win, [tab], "later");
+  assert.match(toast(), /Moved to “Later”/);
+  Orbit.sendTabsToCanvas(win, [tab]);
+  assert.match(toast(), /Already on your canvas/);
+  Orbit.sendTabsToCanvas(win, [tab, other], "reading");
+  assert.match(toast(), /Added 1 and moved 1 to “Reading”/);
+  const cards = win.OrbitChrome.getBoard().items;
+  assert.equal(cards.length, 2, "each tab has exactly one card");
+  assert.ok(cards.every(item => item.frameId === "reading"));
+  assert.throws(() => Orbit.sendTabsToCanvas(win, [tab], "missing"), /Unknown Orbit frame/);
+  assert.throws(() => Orbit.sendTabsToCanvas(win, [{ linkedBrowser: tab.linkedBrowser }]), /open tabs/);
+  assert.throws(() => Orbit.sendTabsToCanvas(win, []), /open tabs/);
+  Orbit.uninit(win);
+});
+
 test("selected text captures a bounded plain note and source URL, never password content", () => {
   const win = createWindow();
   Orbit.openBoard(win);

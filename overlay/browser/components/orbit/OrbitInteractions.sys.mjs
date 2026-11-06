@@ -14,6 +14,9 @@ const windows = new WeakMap();
 let widgetCreated = false;
 export const FOCUS_DEFAULT_PREF = "browser.orbit.focus.default";
 const VERTICAL_TABS_PREF = "sidebar.verticalTabs";
+const DEFAULT_HINT = "↑ ↓ to choose · Enter to open · Esc to return";
+const SEARCH_PLACEHOLDER = "Search tabs, frames, and commands…";
+const accelLabel = () => Services.appinfo.OS === "Darwin" ? "⌘" : "Ctrl";
 
 /** Focus mode is Orbit's default presentation. The person can switch new
  * windows back to the full toolbar from Orbit commands or about:config. */
@@ -184,7 +187,7 @@ export class InteractionWindow {
     header.append(mark, heading, close);
     this.input = this.node("input", "orbit-command-input");
     this.input.type = "search";
-    this.input.placeholder = "Search tabs, frames, and commands…";
+    this.input.placeholder = SEARCH_PLACEHOLDER;
     this.input.autocomplete = "off";
     this.input.spellcheck = false;
     this.input.setAttribute("aria-label", "Search tabs, canvas frames, and Orbit commands");
@@ -198,7 +201,8 @@ export class InteractionWindow {
     this.list.setAttribute("aria-label", "Matching tabs, frames, and commands");
     this.empty = this.node("p", "orbit-command-empty", null, "No matches. Try a tab title, a frame name, or “focus”.");
     this.empty.hidden = true;
-    const hint = this.node("p", null, "orbit-command-hint", "↑ ↓ to choose · Enter to open · Esc to return");
+    const hint = this.node("p", null, "orbit-command-hint", DEFAULT_HINT);
+    this.hint = hint;
     panel.append(header, this.input, this.list, this.empty, hint);
     this.palette.append(panel);
     this.listen(this.palette, "mousedown", event => {
@@ -242,16 +246,20 @@ export class InteractionWindow {
       if (!this.tabIDs.has(tab)) this.tabIDs.set(tab, ++this.serial);
       const url = tab.linkedBrowser.currentURI?.spec || "";
       const group = tab.group?.label || tab.group?.name || "";
+      const live = () => !tab.closing && this.win.gBrowser.getTabForBrowser(tab.linkedBrowser) === tab;
       commands.push({
         id: `tab:${this.tabIDs.get(tab)}`, kind: "tab", label: String(tab.label || "Untitled tab").slice(0, 512),
         detail: `${group ? group + " · " : ""}${url}`.slice(0, 2048), keywords: "tab " + group,
+        web: /^https?:/i.test(url),
         run: () => {
-          if (tab.closing || this.win.gBrowser.getTabForBrowser(tab.linkedBrowser) !== tab) return;
+          if (!live()) return;
           if (tab.hidden) this.win.gBrowser.showTab(tab);
           if (tab.group?.collapsed) tab.group.collapsed = false;
           this.win.gBrowser.selectedTab = tab;
           tab.linkedBrowser.focus();
         },
+        close: () => { if (live()) this.win.gBrowser.removeTab(tab); },
+        toCanvas: (frameId = null) => { if (live()) lazy.Orbit.sendTabsToCanvas(this.win, [tab], frameId); },
       });
     }
     for (const frame of lazy.Orbit.getFrames(this.win)) {
@@ -288,6 +296,8 @@ export class InteractionWindow {
       this.previousFocus = this.win.gBrowser.selectedBrowser;
     }
     this.palette.hidden = false;
+    this.placing = null;
+    this.input.placeholder = SEARCH_PLACEHOLDER;
     this.input.value = "";
     this.selection = 0;
     this.update();
@@ -297,6 +307,7 @@ export class InteractionWindow {
   close(restore = true) {
     if (this.palette.hidden) return;
     this.palette.hidden = true;
+    this.placing = null;
     if (restore) {
       if (this.focusMode && this.nativeSearchNode()?.contains(this.previousFocus)) {
         this.showSearchFallback();
@@ -313,8 +324,60 @@ export class InteractionWindow {
     this.scheduleConceal();
   }
 
+  /** Where a tab can go on the canvas: loose, or into one of its frames. */
+  placeCommands(command) {
+    const name = `“${command.label.slice(0, 80)}”`;
+    return [
+      { id: "place:canvas", kind: "frame", label: "On the canvas", detail: `Add ${name} as a loose card`,
+        keywords: "loose board workspace", run: () => command.toCanvas(null) },
+      ...lazy.Orbit.getFrames(this.win).map(frame => ({
+        id: `place:${frame.id}`, kind: "frame", label: frame.title || "Untitled frame",
+        detail: `${frame.tabCount} ${frame.tabCount === 1 ? "tab" : "tabs"} · Put ${name} here`, keywords: "frame",
+        run: () => command.toCanvas(frame.id),
+      })),
+    ];
+  }
+
+  /** Alt+Enter on a tab, or its frame button: the list becomes the places it can go. */
+  startPlacing(command) {
+    if (command?.kind !== "tab" || !command.web) return;
+    this.placing = { command, query: this.input.value, selection: this.selection };
+    this.input.value = "";
+    this.input.placeholder = `Choose where to put ${command.label.slice(0, 60)}…`;
+    this.selection = 0;
+    this.update();
+    this.input.focus();
+  }
+
+  stopPlacing() {
+    const placing = this.placing;
+    if (!placing) return;
+    this.placing = null;
+    this.input.placeholder = SEARCH_PLACEHOLDER;
+    this.input.value = placing.query;
+    this.selection = placing.selection;
+    this.update();
+    this.input.focus();
+  }
+
+  /** Tab actions keep Orbit commands open, so several tabs can be tidied in a row. */
+  tabAction(command, action) {
+    if (command?.kind !== "tab") return;
+    try {
+      if (action === "close") command.close();
+      else if (action === "canvas" && command.web) command.toCanvas(null);
+      else if (action === "frame") { this.startPlacing(command); return; }
+    } catch (error) {
+      console.error("Orbit tab command failed", error);
+    }
+    if (!this.palette.hidden) {
+      this.update();
+      this.input.focus();
+    }
+  }
+
   update() {
-    this.results = searchCommands(this.commands(), this.input.value);
+    this.results = searchCommands(this.placing ? this.placeCommands(this.placing.command) : this.commands(), this.input.value);
     this.selection = Math.max(0, Math.min(this.selection, this.results.length - 1));
     this.list.replaceChildren();
     this.empty.hidden = !!this.results.length;
@@ -329,9 +392,35 @@ export class InteractionWindow {
       const copy = this.node("span", null, "orbit-command-copy");
       copy.append(this.node("span", null, "orbit-command-label", command.label), this.node("span", null, "orbit-command-detail", command.detail));
       row.append(kind, copy);
+      if (command.kind === "tab") {
+        // Pointer shortcuts for the keys in the hint; the keyboard needs no stop here.
+        const actions = this.node("span", null, "orbit-command-actions");
+        actions.setAttribute("aria-hidden", "true");
+        const choices = command.web ? [["frame", "▣", "Put in a frame · Alt+Enter"], ["canvas", "＋", `Add to canvas · ${accelLabel()}+Enter`]] : [];
+        for (const [action, glyph, title] of [...choices, ["close", "×", "Close tab · Shift+Delete"]]) {
+          const button = this.node("span", null, `orbit-command-action orbit-command-action-${action}`, glyph);
+          button.orbitTabAction = action;
+          button.setAttribute("title", title);
+          actions.append(button);
+        }
+        row.append(actions);
+        row.setAttribute("aria-keyshortcuts", command.web ? "Alt+Enter Control+Enter Shift+Delete" : "Shift+Delete");
+      }
       // Rows are replaced on every query and native tab change. Their listeners
       // belong to the transient nodes, rather than the window cleanup list.
-      row.addEventListener("click", event => { if (event.isTrusted) this.activate(index); });
+      row.addEventListener("click", event => {
+        if (!event.isTrusted) return;
+        let origin = event.originalTarget || event.target;
+        if (origin?.nodeType === 3) origin = origin.parentNode;
+        for (let node = origin; node && node !== row; node = node.parentNode) {
+          if (node.orbitTabAction) {
+            this.selection = index;
+            this.tabAction(command, node.orbitTabAction);
+            return;
+          }
+        }
+        this.activate(index);
+      });
       this.list.append(row);
     });
     this.select(this.selection);
@@ -345,11 +434,24 @@ export class InteractionWindow {
       this.input.setAttribute("aria-activedescendant", row.id);
       row.scrollIntoView({ block: "nearest" });
     } else this.input.removeAttribute("aria-activedescendant");
+    const command = this.results[this.selection];
+    if (this.hint) {
+      this.hint.textContent = this.placing ? "Enter to put it here · Esc to go back" :
+        command?.kind === "tab" ? (command.web ? `Enter to switch · ${accelLabel()}+Enter to add to canvas · Alt+Enter for a frame · Shift+Delete to close` :
+          "Enter to switch · Shift+Delete to close") : DEFAULT_HINT;
+    }
   }
 
   activate(index = this.selection) {
     const command = this.results[index];
     if (!command) return;
+    if (this.placing) {
+      // Filing a tab keeps Orbit commands open on the search it came from.
+      try { command.run(); }
+      catch (error) { console.error("Orbit could not place the tab", error); }
+      this.stopPlacing();
+      return;
+    }
     this.close(false);
     // Default focus is the real selected browser. Native new-tab/canvas
     // commands may subsequently focus their own address field or document.
@@ -394,9 +496,21 @@ export class InteractionWindow {
         this.close(false);
         return;
       }
+      const command = this.results[this.selection];
+      const accelOnly = accel && !event.altKey && !event.shiftKey;
+      const collapsed = this.input.selectionStart === this.input.selectionEnd;
+      if (!this.placing && command?.kind === "tab" && this.doc.activeElement === this.input && (
+          (event.key === "Delete" && event.shiftKey && !accel && !event.altKey && collapsed) ||
+          (event.key === "Enter" && accelOnly) ||
+          (event.key === "Enter" && event.altKey && !accel && !event.shiftKey))) {
+        event.preventDefault(); event.stopPropagation();
+        this.tabAction(command, event.key === "Delete" ? "close" : event.altKey ? "frame" : "canvas");
+        return;
+      }
       if (["ArrowDown", "ArrowUp", "Home", "End", "Enter", "Escape", "Tab"].includes(event.key)) {
         event.preventDefault(); event.stopPropagation();
-        if (event.key === "Escape") this.close();
+        if (event.key === "Escape" && this.placing) this.stopPlacing();
+        else if (event.key === "Escape") this.close();
         else if (event.key === "Enter") {
           if (this.doc.activeElement === this.doc.getElementById("orbit-command-close")) this.close();
           else this.activate();

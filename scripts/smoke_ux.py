@@ -1271,6 +1271,39 @@ def run_checks(driver, handle, url, result, folder):
         assert driver.execute_script("return gBrowser.tabs.length;") == count + 1, "Frame command duplicated existing live tabs"
     checks.append("Frame search opens its real tabs together and repeated activation preserves live tab identities")
 
+    target = url + "palette-actions"
+    driver.execute_script("gBrowser.addWebTab(arguments[0], {inBackground: true, skipAnimation: true});", script_args=[target])
+    wait_for(driver, '''return [...gBrowser.tabs].some(tab => !tab.closing && tab.linkedBrowser.currentURI.spec === arguments[0] &&
+        tab.label.startsWith("Orbit radial"));''', "a background tab to tidy from Orbit commands", [target])
+    selected_before = driver.execute_script("return gBrowser.selectedBrowser.currentURI.spec;")
+    open_palette(driver)
+    state = search(driver, "palette-actions")
+    assert len(state["rows"]) == 1 and state["rows"][0]["id"].startswith("tab:"), state
+    chord(driver, Keys.CONTROL, Keys.ENTER)
+    wait_for(driver, '''return window.OrbitChrome.getBoard().items.some(item => item.type === "tab" && item.url === arguments[0] && !item.frameId);''',
+             "Ctrl+Enter adds the chosen tab to the canvas", [target])
+    assert palette_state(driver)["visible"], "Adding a tab to the canvas closed Orbit commands"
+    chord(driver, Keys.ALT, Keys.ENTER)
+    wait_for(driver, '''return [...document.querySelectorAll("#orbit-command-results [data-orbit-command-id]")]
+        .some(row => row.dataset.orbitCommandId === "place:ux-frame");''', "Alt+Enter lists the canvas frames")
+    search(driver, "reading room", "place:ux-frame")
+    chord(driver, Keys.ENTER)
+    wait_for(driver, '''return window.OrbitChrome.getBoard().items.some(item => item.url === arguments[0] && item.frameId === "ux-frame") &&
+        document.getElementById("orbit-command-input").value === "palette-actions";''',
+             "choosing a frame files the tab's card there and returns to the search", [target])
+    assert palette_state(driver)["visible"]
+    chord(driver, Keys.SHIFT, Keys.DELETE)
+    wait_for(driver, 'return ![...gBrowser.tabs].some(tab => !tab.closing && tab.linkedBrowser.currentURI.spec === arguments[0]);',
+             "Shift+Delete closes the chosen tab", [target])
+    state = palette_state(driver)
+    assert state["visible"] and not any(row["id"].startswith("tab:") for row in state["rows"]), state
+    assert driver.execute_script('return window.OrbitChrome.getBoard().items.some(item => item.url === arguments[0] && item.frameId === "ux-frame");',
+                                 script_args=[target]), "The closed tab's card left the canvas"
+    assert driver.execute_script("return gBrowser.selectedBrowser.currentURI.spec;") == selected_before, "Tab actions switched tabs"
+    chord(driver, Keys.ESCAPE)
+    palette_closed(driver)
+    checks.append("Orbit commands add a tab to the canvas, file it into a frame and close it, staying open throughout")
+
     old_handles = set(driver.window_handles)
     open_palette(driver)
     state = search(driver, "new tab", "action:new-tab")
