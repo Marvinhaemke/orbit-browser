@@ -465,10 +465,14 @@ jobs:
           $target = 'C:\orbit-installer-check'
           $profileDir = "$target\profile"
           $programs = [Environment]::GetFolderPath('Programs')
+          # Windows hides the path of Gecko's sandboxed child processes, so stop
+          # every orbit.exe (only this installation runs now) and wait until all
+          # have exited and released their mapped files, as the updater requires.
           function Stop-InstalledOrbit {
-            $running = @(Get-Process orbit -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$target\*" })
-            $running | Stop-Process -Force
-            $running | Wait-Process -Timeout 60 -ErrorAction SilentlyContinue
+            Get-Process orbit -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+            $deadline = (Get-Date).AddSeconds(60)
+            while ((Get-Process orbit -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
+            if (Get-Process orbit -ErrorAction SilentlyContinue) { throw 'Orbit processes did not exit within 60 seconds' }
           }
           $result = Start-Process $setup -ArgumentList '/S', "/D=$target" -Wait -PassThru
           if ($result.ExitCode -ne 0) { throw "Silent install failed: $($result.ExitCode)" }
