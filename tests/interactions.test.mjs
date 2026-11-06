@@ -679,3 +679,16 @@ test("Orbit commands open the corner tools menu from the keyboard only in focus 
   assert.equal(state.focusTools.visible, true); assert.equal(islandVisible(state, "tools"), true);
   state.destroy();
 });
+test("the tools quarter stays open when it grows over its own corner sensor under a resting pointer", () => {
+  const win = createWindow(); const state = new InteractionWindow(win); state.setFocusMode(true);
+  state.toolsHotzone.emit("mouseenter", { clientX: 14, clientY: 14 }); win.advance(140);
+  assert.equal(islandVisible(state, "tools"), true);
+  // Gecko re-targets the stationary pointer to the menu that now covers the sensor.
+  state.toolsHotzone.emit("mouseleave", { clientX: 14, clientY: 14 }); win.advance(2000);
+  assert.equal(islandVisible(state, "tools"), true, "a resting pointer must not make the quarter flicker closed");
+  assert.equal(state.focusTools.openCount, 1, "the quarter is not reopened in a loop");
+  win.emit("mousemove", { clientX: 900, clientY: 400 }); win.advance(349);
+  assert.equal(islandVisible(state, "tools"), true); win.advance(1);
+  assert.equal(islandVisible(state, "tools"), false, "moving away still conceals it after the grace period");
+  state.destroy();
+});

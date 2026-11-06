@@ -200,7 +200,7 @@ export class InteractionWindow {
       zone.setAttribute("aria-hidden", "true");
       this[`${island}Hotzone`] = zone;
       this.listen(zone, "mouseenter", event => { if (event.isTrusted) this.enterHotzone(island); });
-      this.listen(zone, "mouseleave", event => { if (event.isTrusted) this.leaveHotzone(island); });
+      this.listen(zone, "mouseleave", event => { if (event.isTrusted) this.leaveHotzone(island, event); });
       this.root.append(zone);
     }
   }
@@ -616,7 +616,16 @@ export class InteractionWindow {
     }, 140);
   }
 
-  leaveHotzone(island) {
+  leaveHotzone(island, event = null) {
+    // The tools quarter grows out of the corner and covers its own sensor, so
+    // Gecko reports a leave although the pointer is resting inside the menu.
+    // Treat that as staying; real movement away still conceals it.
+    if (island === "tools" && this.focusTools?.visible &&
+        this.focusTools.ownsPointer?.(event?.clientX, event?.clientY)) {
+      this.islands.tools.hovered = true;
+      this.cancelIslandTimer("tools", "conceal");
+      return;
+    }
     this.islands[island].hovered = false;
     this.cancelIslandTimer(island, "dwell");
     this.scheduleConceal(island);
