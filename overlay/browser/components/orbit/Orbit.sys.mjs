@@ -232,6 +232,82 @@ function clone(value) {
   return value == null ? null : JSON.parse(JSON.stringify(value));
 }
 
+function emptyBoard() {
+  return { version: 1, camera: { x: 68, y: 78, zoom: 1 }, frames: [], items: [], connections: [], strokes: [] };
+}
+
+function newID() {
+  return `orbit-${Services.uuid.generateUUID().toString().replace(/[{}]/g, "")}`;
+}
+
+const CARD = { w: 248, h: 160 };
+const FRAME_SLOT = { x: 268, y: 180, left: 20, top: 56 };
+const LOOSE_SLOT = { x: 276, y: 228 };
+
+function overlaps(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+function coordinate(value) {
+  return Math.max(-100000, Math.min(100000, Math.round(value)));
+}
+
+/** The canvas's membership rule: a card belongs to the smallest frame that
+ * contains its center. */
+export function frameAt(board, x, y) {
+  return board.frames
+    .filter(frame => x >= frame.x && x <= frame.x + frame.w && y >= frame.y && y <= frame.y + frame.h)
+    .sort((a, b) => a.w * a.h - b.w * b.h)[0] || null;
+}
+
+/** Puts a card in the first free slot of a frame, growing the frame when it
+ * is full. Slots that a smaller frame inside this one would claim are skipped. */
+export function placeInFrame(board, item, frame) {
+  const columns = Math.max(1, Math.floor((frame.w - FRAME_SLOT.left) / FRAME_SLOT.x));
+  const others = board.items.filter(other => other !== item && other.frameId === frame.id);
+  for (let slot = 0; slot < 1000; slot++) {
+    const spot = {
+      x: coordinate(frame.x + FRAME_SLOT.left + slot % columns * FRAME_SLOT.x),
+      y: coordinate(frame.y + FRAME_SLOT.top + Math.floor(slot / columns) * FRAME_SLOT.y),
+      w: item.w, h: item.h,
+    };
+    if (others.some(other => overlaps(spot, other))) continue;
+    const inner = frameAt(board, spot.x + spot.w / 2, spot.y + spot.h / 2);
+    if (inner && inner !== frame && inner.w * inner.h < frame.w * frame.h) continue;
+    item.x = spot.x;
+    item.y = spot.y;
+    item.frameId = frame.id;
+    frame.w = Math.min(50000, Math.max(frame.w, item.x + item.w - frame.x + FRAME_SLOT.left));
+    frame.h = Math.min(50000, Math.max(frame.h, item.y + item.h - frame.y + FRAME_SLOT.left));
+    return item;
+  }
+  throw new Error("This frame has no free space left");
+}
+
+/** Puts a card in the first free grid slot outside every frame. */
+export function placeLoose(board, item) {
+  for (let slot = 0; slot < 2000; slot++) {
+    const spot = { x: slot % 3 * LOOSE_SLOT.x, y: Math.floor(slot / 3) * LOOSE_SLOT.y, w: item.w, h: item.h };
+    if (board.items.some(other => other !== item && overlaps(spot, other))) continue;
+    if (frameAt(board, spot.x + spot.w / 2, spot.y + spot.h / 2)) continue;
+    item.x = spot.x;
+    item.y = spot.y;
+    delete item.frameId;
+    return item;
+  }
+  throw new Error("The canvas has no free space left");
+}
+
+/** Drops a card centred on a canvas point; several cards fan out slightly. */
+function placeAt(board, item, point, index) {
+  item.x = coordinate(point.x - item.w / 2 + index * 28);
+  item.y = coordinate(point.y - item.h / 2 + index * 28);
+  const frame = frameAt(board, item.x + item.w / 2, item.y + item.h / 2);
+  if (frame) item.frameId = frame.id;
+  else delete item.frameId;
+  return item;
+}
+
 class OrbitWindow {
   constructor(win) {
     this.win = win;
@@ -260,12 +336,13 @@ class OrbitWindow {
     });
 
     const tabsChanged = event => {
-      if (event.type === "TabSelect") {
+      if (event.type === "TabSelect" && !this.keepOverlay) {
         this.hide();
       }
       this.notify();
     };
-    for (const name of ["TabOpen", "TabClose", "TabSelect", "TabAttrModified", "SSTabRestored"]) {
+    // The canvas's open-tabs tray follows the tab strip's order and state.
+    for (const name of ["TabOpen", "TabClose", "TabSelect", "TabAttrModified", "TabMove", "TabPinned", "TabUnpinned", "SSTabRestored"]) {
       this.listen(win.gBrowser.tabContainer, name, tabsChanged);
     }
     this.listen(win, "keydown", event => {
@@ -327,6 +404,8 @@ class OrbitWindow {
     expose("openFrame", frameID => this.openFrame(frameID));
     expose("selectTab", tabID => this.selectTab(tabID));
     expose("closeTab", tabID => this.closeTab(tabID));
+    expose("closeTabs", tabIDs => this.closeTabs(tabIDs));
+    expose("placeTabs", options => this.placeTabs(options, document || this.frame?.contentDocument));
     expose("peek", record => this.peek(record));
     expose("closePeek", () => this.closePeek());
     expose("split", record => this.split(record));
@@ -430,7 +509,7 @@ class OrbitWindow {
     }));
   }
 
-  captureContext(context, kind) {
+  captureContext(context, kind, frameId = null) {
     const browser = context?.browser;
     const tab = browser && this.win.gBrowser.getTabForBrowser(browser);
     const actor = context?.actor;
@@ -446,10 +525,9 @@ class OrbitWindow {
         actor.manager.rootFrameLoader?.ownerElement !== browser) {
       throw new Error("Orbit requires a current native webpage context");
     }
-    const board = this.getBoard() || {
-      version: 1, camera: { x: 68, y: 78, zoom: 1 },
-      frames: [], items: [], connections: [], strokes: [],
-    };
+    const board = this.getBoard() || emptyBoard();
+    const frame = frameId === null ? null : board.frames.find(candidate => candidate.id === identifier(frameId, "frame id"));
+    if (frameId !== null && !frame) throw new TypeError("Unknown Orbit frame");
     const userContextId = containerID(Number(tab.userContextId || 0));
     let item, existing = false;
     if (kind === "selection") {
@@ -482,20 +560,101 @@ class OrbitWindow {
     } else {
       throw new TypeError("Unknown Orbit canvas capture action");
     }
+    const alreadyThere = existing && (!frame || item.frameId === frame.id);
     if (!existing) {
       if (board.items.length >= 500) throw new Error("This workspace has reached its 500 card limit");
-      const index = board.items.filter(candidate => !candidate.frameId).length;
-      Object.assign(item, {
-        id: `orbit-${Services.uuid.generateUUID().toString().replace(/[{}]/g, "")}`,
-        x: Math.min(100000, index % 3 * 276),
-        y: Math.min(100000, Math.floor(index / 3) * 228),
-      });
+      item.id = newID();
       board.items.push(item);
     }
+    // An existing card moves into the chosen frame rather than duplicating.
+    if (frame && !alreadyThere) placeInFrame(board, item, frame);
+    else if (!existing) placeLoose(board, item);
     this.saveBoard(board);
-    this.showCaptureToast(existing ? "Already on your canvas" :
-      kind === "selection" ? "Text saved to your canvas" : "Card added to your canvas");
-    return { id: item.id, type: item.type, existing };
+    const where = frame ? `“${frame.title || "Untitled frame"}”` : "your canvas";
+    this.showCaptureToast(alreadyThere ? (frame ? `Already in ${where}` : "Already on your canvas") :
+      existing ? `Moved to ${where}` : kind === "selection" ? `Text saved to ${where}` : `Card added to ${where}`);
+    return { id: item.id, type: item.type, existing, frameId: item.frameId || null };
+  }
+
+  /** The card that belongs to a live tab: its own card, or a saved card for
+   * the same address and container that no live tab owns yet. */
+  cardForTab(board, tab) {
+    const tabId = this.tabID(tab);
+    const url = webURL(tab.linkedBrowser.currentURI.spec);
+    const userContextId = containerID(Number(tab.userContextId || 0));
+    const title = String(tab.label || url).slice(0, 2048);
+    const item = board.items.find(candidate => candidate.type === "tab" && candidate.tabId === tabId) ||
+      board.items.find(candidate => candidate.type === "tab" && candidate.url === url &&
+        candidate.userContextId === userContextId && !(candidate.tabId && this.findTab(candidate.tabId)));
+    if (item) {
+      Object.assign(item, { tabId, url, title });
+      return { item, existing: true };
+    }
+    return { item: { type: "tab", url, title, userContextId, tabId, ...CARD }, existing: false };
+  }
+
+  /** Adds live tabs to the workspace or moves their cards: into a frame, to a
+   * dropped canvas point, or loose. A tab never gets a second card. The calling
+   * canvas is not echoed, so it can keep its own undo history. */
+  placeTabs(options, source = null) {
+    if (!options || typeof options !== "object" || !Array.isArray(options.tabIds) ||
+        !options.tabIds.length || options.tabIds.length > 100) {
+      throw new TypeError("Orbit requires 1 to 100 tab ids");
+    }
+    const tabs = [...new Set(options.tabIds)].map(id => {
+      const tab = this.findTab(id);
+      if (!tab || !isWebURL(tab.linkedBrowser?.currentURI?.spec)) {
+        throw new Error("A chosen tab has closed or is not a website");
+      }
+      return tab;
+    });
+    const board = this.getBoard() || emptyBoard();
+    let frame = null;
+    if (options.frameId !== undefined && options.frameId !== null) {
+      frame = board.frames.find(candidate => candidate.id === identifier(options.frameId, "frame id"));
+      if (!frame) throw new TypeError("Unknown Orbit frame");
+    }
+    const point = options.point ? {
+      x: finite(options.point.x, -100000, 100000, "drop x"),
+      y: finite(options.point.y, -100000, 100000, "drop y"),
+    } : null;
+    let added = 0;
+    tabs.forEach((tab, index) => {
+      const { item, existing } = this.cardForTab(board, tab);
+      if (!existing) {
+        if (board.items.length >= 500) throw new Error("This workspace has reached its 500 card limit");
+        item.id = newID();
+        board.items.push(item);
+        added++;
+      }
+      if (frame) {
+        if (item.frameId !== frame.id) placeInFrame(board, item, frame);
+      } else if (point) placeAt(board, item, point, index);
+      else if (!existing) placeLoose(board, item);
+    });
+    return { board: this.saveBoard(board, source), added, moved: tabs.length - added };
+  }
+
+  /** Closes live tabs. Their cards stay on the canvas as saved websites. */
+  closeTabs(ids) {
+    if (!Array.isArray(ids) || !ids.length || ids.length > 100) {
+      throw new TypeError("Orbit requires 1 to 100 tab ids");
+    }
+    const tabs = [...new Set(ids)].map(id => this.findTab(id)).filter(Boolean);
+    if (!tabs.length) return 0;
+    const browser = this.win.gBrowser;
+    // Closing every remaining tab would close the window and its canvas.
+    if (!browser.tabs.some(tab => !tab.closing && !tabs.includes(tab))) {
+      this.win.BrowserCommands?.openTab?.();
+    }
+    // An overlay canvas stays open when the tab beneath it closes.
+    this.keepOverlay = !!this.overlay && !this.overlay.hidden;
+    try {
+      for (const tab of tabs) browser.removeTab(tab, { animate: !this.keepOverlay });
+    } finally {
+      this.keepOverlay = false;
+    }
+    return tabs.length;
   }
 
   showCaptureToast(message) {
@@ -545,6 +704,9 @@ class OrbitWindow {
   }
 
   describeTab(tab) {
+    // Firefox keeps tab icons as local raster data: URLs. Anything else,
+    // including remote or SVG icons, is left out of the canvas.
+    const icon = tab.image;
     return {
       id: this.tabID(tab),
       title: (tab.label || tab.linkedBrowser.currentURI.spec).slice(0, 2048),
@@ -553,6 +715,7 @@ class OrbitWindow {
       selected: tab === this.win.gBrowser.selectedTab,
       active: tab === this.win.gBrowser.selectedTab,
       pinned: !!tab.pinned,
+      ...(typeof icon === "string" && icon.length <= 16384 && FAVICON_PATTERN.test(icon) ? { favicon: icon } : {}),
     };
   }
 
@@ -751,11 +914,7 @@ class OrbitWindow {
   }
 
   closeTab(id) {
-    const tab = this.findTab(id);
-    if (tab) {
-      this.win.gBrowser.removeTab(tab, { animate: true });
-    }
-    return !!tab;
+    return this.closeTabs([identifier(id, "tab id")]) > 0;
   }
 
   openFrame(id) {
@@ -1101,9 +1260,19 @@ export const Orbit = {
     return this._windows.get(win)?.openFrame(id);
   },
 
-  captureContext(win, context, kind) {
+  captureContext(win, context, kind, frameId = null) {
     this.init(win);
-    return this._windows.get(win)?.captureContext(context, kind);
+    return this._windows.get(win)?.captureContext(context, kind, frameId);
+  },
+
+  placeTabs(win, options) {
+    this.init(win);
+    return this._windows.get(win)?.placeTabs(options);
+  },
+
+  closeTabs(win, ids) {
+    this.init(win);
+    return this._windows.get(win)?.closeTabs(ids);
   },
 
   connectCanvas(canvasWindow) {

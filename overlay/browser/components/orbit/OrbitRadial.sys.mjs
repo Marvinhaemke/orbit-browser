@@ -26,9 +26,32 @@ function captureURL(value) {
   }
 }
 
+const FRAME_TARGET_LIMIT = 24;
+
 /** Availability comes only from Firefox's initialized context descriptor.
- * Commands revalidate that descriptor again when activated. */
-export function canvasCaptureActions(context) {
+ * Commands revalidate that descriptor again when activated. When the canvas
+ * has frames, each capture opens a fan: loose on the canvas, or one frame. */
+export function canvasCaptureActions(context, frames = []) {
+  const items = directCaptureActions(context);
+  const targets = (Array.isArray(frames) ? frames : []).slice(0, FRAME_TARGET_LIMIT);
+  if (!targets.length) return items;
+  return items.map(item => ({
+    id: item.id, label: item.label, kind: "submenu",
+    children: [
+      { ...item, id: `${item.id}-loose`, label: "On the canvas" },
+      ...targets.map(frame => ({
+        ...item, id: `${item.id}-frame-${frame.id}`, label: frame.title || "Untitled frame", frameId: frame.id,
+      })),
+    ],
+  }));
+}
+
+/** Every activatable capture, with or without frame fans. */
+export function flatCaptureActions(context, frames = []) {
+  return canvasCaptureActions(context, frames).flatMap(item => item.children || [item]);
+}
+
+function directCaptureActions(context) {
   const items = [];
   if (captureURL(context?.browser?.currentURI?.spec)) items.push({
     id: "orbit-canvas-page", label: "Add page card", kind: "canvas-capture", captureKind: "page",
@@ -218,10 +241,19 @@ class RadialWindow {
     const centerId = this.context?.onLink ? "context-openlinkintab" :
       this.context?.onImage ? "context-viewimage" : null;
     const native = items.filter(item => item.id !== centerId);
-    const capture = canvasCaptureActions(this.context);
+    const capture = canvasCaptureActions(this.context, this._canvasFrames());
     return capture.length ? [{
       id: "orbit-send-to-canvas", label: "Send to canvas", kind: "submenu", children: capture,
     }, ...native] : native;
+  }
+
+  _canvasFrames() {
+    try {
+      return lazy.Orbit.getFrames?.(this.win) || [];
+    } catch (error) {
+      console.error("Orbit could not read canvas frames", error);
+      return [];
+    }
   }
 
   _centerItem() {
@@ -417,9 +449,11 @@ class RadialWindow {
       // rings. Native edit commands use commandDispatcher's focused window,
       // so restore the source browser BEFORE dispatching the original item.
       this.contextBrowser.focus();
+      // Kind and frame come from the verified descriptor and the saved board,
+      // looked up by the activated item's id, never from the item itself.
       const capture = item.kind === "canvas-capture" &&
-        canvasCaptureActions(this.context).find(action => action.id === item.id);
-      if (capture) lazy.Orbit.captureContext(this.win, this.context, capture.captureKind);
+        flatCaptureActions(this.context, this._canvasFrames()).find(action => action.id === item.id);
+      if (capture) lazy.Orbit.captureContext(this.win, this.context, capture.captureKind, capture.frameId ?? null);
       else if (node) executeNativeCommand(this.win, node, event);
       else if (item.id === "orbit-radial-new-tab" && !this.context.onLink && !this.context.onImage) {
         const tab = this.win.gBrowser.getTabForBrowser(this.contextBrowser);

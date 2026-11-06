@@ -67,6 +67,14 @@
   let shortcutSites = [];
   let radialContext = "canvas";
   const history = [];
+  // The open-tabs tray keeps its own selection, separate from the canvas's.
+  // A drag carries only a random token; the tab ids stay in this page.
+  const TAB_DRAG = "application/x-orbit-tabs";
+  const traySelection = new Set();
+  let trayAnchor = null;
+  let trayFocus = null;
+  let trayDrag = null;
+  let trayStale = false;
   const isMac = /Mac/.test(navigator.platform);
   const plural = (count, noun) => `${count} ${noun}${count === 1 ? "" : "s"}`;
 
@@ -571,8 +579,290 @@
       const nav = button("", `Focus frame ${frame.title}`, () => fit(frame), "frame-nav");
       nav.style.setProperty("--accent", frame.color);
       nav.append(el("span", "frame-swatch"), el("strong", "", frame.title), el("small", "", count));
+      acceptTabDrops(nav, {frameId: frame.id});
       $("frame-list").append(nav);
     }
+  }
+
+  const cardOf = tabId => board.items.find(item => item.type === "tab" && item.tabId === tabId);
+  const trayOrder = () => nativeTabs.map(tab => tab.id).filter(tabId => traySelection.has(tabId));
+
+  /** The smallest frame around a canvas point, which is where a card centered there belongs. */
+  function frameAt(x, y) {
+    const frames = board.frames.filter(frame => x >= frame.x && x <= frame.x + frame.w && y >= frame.y && y <= frame.y + frame.h);
+    frames.sort((a, b) => a.w * a.h - b.w * b.h);
+    return frames[0] || null;
+  }
+
+  function renderTray() {
+    // A rebuilt row would end the drag it started, so the tray waits.
+    if (trayDrag) { trayStale = true; return; }
+    const live = new Set(nativeTabs.map(tab => tab.id));
+    for (const tabId of traySelection) if (!live.has(tabId)) traySelection.delete(tabId);
+    if (!live.has(trayAnchor)) trayAnchor = null;
+    if (!live.has(trayFocus)) trayFocus = null;
+    const tray = $("tab-tray");
+    const hadFocus = tray.contains(document.activeElement);
+    const rows = nativeTabs.map(trayRow);
+    tray.replaceChildren(...(rows.length ? rows : [el("p", "tray-empty", "Open websites appear here, ready to drag onto the canvas.")]));
+    $("open-count").textContent = nativeTabs.length;
+    document.querySelector(".sidebar").classList.toggle("has-tabs", nativeTabs.length > 0);
+    const focusId = trayFocus || trayOrder()[0] || nativeTabs.find(tab => tab.active)?.id;
+    const focusRow = rows.find(row => row.dataset.tabId === focusId) || rows[0];
+    if (focusRow) focusRow.tabIndex = 0;
+    if (hadFocus) (focusRow || viewport).focus({preventScroll: true});
+    renderTrayActions();
+  }
+
+  function trayRow(tab) {
+    const card = cardOf(tab.id);
+    const frame = card?.frameId ? board.frames.find(candidate => candidate.id === card.frameId) : null;
+    const title = tabTitle(tab);
+    const row = el("div", `tray-tab${tab.active ? " active" : ""}`);
+    row.dataset.tabId = tab.id;
+    row.setAttribute("role", "option");
+    row.setAttribute("aria-selected", String(traySelection.has(tab.id)));
+    row.setAttribute("aria-label", [title, domain(tab.url), frame ? `in frame ${frame.title}` : card ? "on the canvas" : "",
+      tab.active ? "current tab" : ""].filter(Boolean).join(", "));
+    row.tabIndex = -1;
+    row.draggable = true;
+    let mark;
+    if (tab.favicon) {
+      mark = el("img", "tray-icon");
+      mark.src = tab.favicon;
+      mark.alt = "";
+      mark.draggable = false;
+    } else {
+      mark = el("span", "tray-icon", siteInitial({url: tab.url, title}));
+      mark.setAttribute("aria-hidden", "true");
+    }
+    const text = el("div", "tray-text");
+    const name = el("strong", "", title);
+    name.title = title;
+    const meta = el("small");
+    meta.append(el("span", "", domain(tab.url)));
+    if (card) {
+      const place = el("span", "tray-place");
+      place.title = frame ? `Show its card in “${frame.title}”` : "Show its card on the canvas";
+      if (frame) {
+        place.style.setProperty("--accent", frame.color);
+        place.append(el("span", "frame-swatch"));
+      }
+      place.append(el("span", "", frame ? frame.title : "Canvas"));
+      place.addEventListener("click", event => { event.stopPropagation(); showCard(card.id); });
+      meta.append(place);
+    }
+    text.append(name, meta);
+    const close = button("×", "Close this tab. Its card stays on the canvas.", event => {
+      event.stopPropagation();
+      closeTrayTabs([tab.id]);
+    }, "tray-close");
+    close.tabIndex = -1;
+    close.setAttribute("aria-hidden", "true");
+    row.append(mark, text, close);
+    row.addEventListener("click", event => chooseTrayRow(tab.id, event));
+    row.addEventListener("dblclick", event => {
+      if (!event.target.closest("button, .tray-place")) openTrayTab(tab.id);
+    });
+    row.addEventListener("focus", () => {
+      trayFocus = tab.id;
+      for (const node of $("tab-tray").querySelectorAll(".tray-tab")) node.tabIndex = node === row ? 0 : -1;
+    });
+    row.addEventListener("dragstart", event => startTrayDrag(event, tab.id));
+    row.addEventListener("dragend", endTrayDrag);
+    return row;
+  }
+
+  function chooseTrayRow(tabId, {shiftKey = false, ctrlKey = false, metaKey = false} = {}) {
+    const order = nativeTabs.map(tab => tab.id);
+    if (shiftKey && order.includes(trayAnchor)) {
+      const [from, to] = [order.indexOf(trayAnchor), order.indexOf(tabId)].sort((a, b) => a - b);
+      if (!ctrlKey && !metaKey) traySelection.clear();
+      order.slice(from, to + 1).forEach(candidate => traySelection.add(candidate));
+    } else if (ctrlKey || metaKey) {
+      if (traySelection.has(tabId)) traySelection.delete(tabId);
+      else traySelection.add(tabId);
+      trayAnchor = tabId;
+    } else {
+      traySelection.clear();
+      traySelection.add(tabId);
+      trayAnchor = tabId;
+    }
+    trayFocus = tabId;
+    updateTraySelection();
+  }
+
+  function updateTraySelection() {
+    for (const row of $("tab-tray").querySelectorAll(".tray-tab")) {
+      row.setAttribute("aria-selected", String(traySelection.has(row.dataset.tabId)));
+    }
+    renderTrayActions();
+  }
+
+  function renderTrayActions() {
+    const count = traySelection.size;
+    $("tray-actions").hidden = !count;
+    if (!count) return;
+    $("tray-selected").textContent = `${count} selected`;
+    const select = $("tray-frame");
+    if (document.activeElement === select) return;
+    const value = select.value;
+    const option = (optionValue, text) => {
+      const node = el("option", "", text);
+      node.value = optionValue;
+      return node;
+    };
+    select.replaceChildren(option("", "On the canvas"), ...board.frames.map(frame => option(frame.id, frame.title)));
+    select.value = board.frames.some(frame => frame.id === value) ? value : "";
+  }
+
+  function trayKeys(event) {
+    const row = event.target.closest?.(".tray-tab");
+    if (!row) return;
+    const tabId = row.dataset.tabId;
+    const rows = [...$("tab-tray").querySelectorAll(".tray-tab")];
+    const index = rows.indexOf(row);
+    const modifier = event.ctrlKey || event.metaKey;
+    let handled = true;
+    if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+      const next = rows[event.key === "Home" ? 0 : event.key === "End" ? rows.length - 1 :
+        clamp(index + (event.key === "ArrowDown" ? 1 : -1), 0, rows.length - 1)];
+      if (event.shiftKey && !trayAnchor) trayAnchor = tabId;
+      next.focus();
+      // Ctrl moves focus alone; Shift extends from the anchor; plain keys select.
+      if (event.shiftKey) chooseTrayRow(next.dataset.tabId, {shiftKey: true});
+      else if (!modifier) chooseTrayRow(next.dataset.tabId);
+    } else if (event.key === " ") {
+      chooseTrayRow(tabId, {ctrlKey: true});
+    } else if (event.key === "Enter") {
+      openTrayTab(tabId);
+    } else if (event.key === "Delete" || event.key === "Backspace") {
+      closeTrayTabs(traySelection.has(tabId) ? trayOrder() : [tabId]);
+    } else if (modifier && event.key.toLowerCase() === "a") {
+      nativeTabs.forEach(tab => traySelection.add(tab.id));
+      updateTraySelection();
+    } else if (event.key === "Escape" && traySelection.size) {
+      traySelection.clear();
+      updateTraySelection();
+    } else {
+      handled = false;
+    }
+    if (handled) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  }
+
+  /** Pans to a card without changing the zoom, then selects it. */
+  function showCard(itemId) {
+    const item = board.items.find(candidate => candidate.id === itemId);
+    if (!item) return;
+    const area = freeArea();
+    const {zoom} = board.camera;
+    board.camera.x = clamp((area.left + area.right) / 2 - origin.x - (item.x + item.w / 2) * zoom, -100000, 100000);
+    board.camera.y = clamp((area.top + area.bottom) / 2 - origin.y - (item.y + item.h / 2) * zoom, -100000, 100000);
+    applyCamera();
+    scheduleSave();
+    select(item.id);
+    document.querySelector(`.item[data-id="${CSS.escape(item.id)}"]`)?.focus({preventScroll: true});
+  }
+
+  async function openTrayTab(tabId) {
+    try {
+      persist();
+      await bridge.selectTab(tabId);
+      bridge.hideCanvas();
+    } catch (error) { report(error); }
+  }
+
+  async function closeTrayTabs(ids) {
+    const tabIds = [...new Set(ids)].slice(0, 100);
+    if (!tabIds.length) return;
+    try {
+      persist();
+      const kept = tabIds.some(tabId => cardOf(tabId));
+      const closed = await bridge.closeTabs(tabIds);
+      tabIds.forEach(tabId => traySelection.delete(tabId));
+      toast(!closed ? "Those tabs had already closed" :
+        `Closed ${plural(closed, "tab")}${kept ? " · Cards stay on the canvas" : ""}`);
+      await refreshTabs();
+    } catch (error) { report(error); }
+  }
+
+  /** Adds tabs to the canvas or moves their cards: into a frame, to a dropped
+   * point, or loose. Orbit places them so every canvas sees the same result;
+   * this canvas keeps an undo step for it. */
+  async function placeTrayTabs(ids, options = {}) {
+    const tabIds = [...new Set(ids)].filter(tabId => nativeTabs.some(tab => tab.id === tabId)).slice(0, 100);
+    if (!tabIds.length) return;
+    const frame = options.frameId ? board.frames.find(candidate => candidate.id === options.frameId) : null;
+    const settled = tabIds.filter(tabId => {
+      const card = cardOf(tabId);
+      return card && (!frame || card.frameId === frame.id);
+    }).length;
+    persist();
+    checkpoint();
+    try {
+      const result = await bridge.placeTabs({tabIds, ...options});
+      board = result.board;
+      if (tabIds.length === 1) selected = cardOf(tabIds[0])?.id || selected;
+      render();
+      const where = frame ? `“${frame.title}”` : "your canvas";
+      const moved = options.point ? result.moved : result.moved - settled;
+      toast(options.point ? `Placed ${plural(tabIds.length, "tab")} on the canvas` :
+        result.added && moved ? `Added ${result.added} and moved ${moved} to ${where}` :
+        result.added ? `Added ${plural(result.added, "tab")} to ${where}` :
+        moved ? `Moved ${plural(moved, "card")} to ${where}` : frame ? `Already in ${where}` : "Already on your canvas");
+    } catch (error) {
+      history.pop();
+      $("undo").disabled = !history.length;
+      report(error);
+    }
+  }
+
+  function startTrayDrag(event, tabId) {
+    if (!traySelection.has(tabId)) chooseTrayRow(tabId);
+    trayDrag = {token: id(), ids: trayOrder()};
+    event.dataTransfer.setData(TAB_DRAG, trayDrag.token);
+    event.dataTransfer.effectAllowed = "copyMove";
+    for (const row of $("tab-tray").querySelectorAll(".tray-tab")) {
+      row.classList.toggle("dragging", traySelection.has(row.dataset.tabId));
+    }
+  }
+
+  function endTrayDrag() {
+    if (!trayDrag) return;
+    trayDrag = null;
+    viewport.classList.remove("tab-drop");
+    document.querySelectorAll(".drop-target, .tray-tab.dragging").forEach(node => node.classList.remove("drop-target", "dragging"));
+    if (trayStale) { trayStale = false; renderTray(); }
+  }
+
+  const carriesTabs = event => !!trayDrag && [...(event.dataTransfer?.types || [])].includes(TAB_DRAG);
+
+  /** The tabs a drop delivers, when it is this tray's own drag. */
+  function droppedTabs(event) {
+    const ids = trayDrag && event.dataTransfer?.getData(TAB_DRAG) === trayDrag.token ? trayDrag.ids : null;
+    endTrayDrag();
+    return ids;
+  }
+
+  function acceptTabDrops(node, options) {
+    node.addEventListener("dragover", event => {
+      if (!carriesTabs(event)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+      node.classList.add("drop-target");
+    });
+    node.addEventListener("dragleave", event => {
+      if (!node.contains(event.relatedTarget)) node.classList.remove("drop-target");
+    });
+    node.addEventListener("drop", event => {
+      if (!carriesTabs(event)) return;
+      event.preventDefault();
+      const ids = droppedTabs(event);
+      if (ids) placeTrayTabs(ids, options);
+    });
   }
 
   function curve(from, to) {
@@ -632,6 +922,7 @@
   function render() {
     $("items").replaceChildren(...board.items.map(item => item.type === "tab" ? renderCard(item) : renderNote(item)));
     renderFrames();
+    renderTray();
     renderLines();
     renderStrokes();
     renderSelection();
@@ -644,11 +935,8 @@
 
   function updateMembership() {
     for (const item of board.items) {
-      const cx = item.x + item.w / 2;
-      const cy = item.y + item.h / 2;
-      const frames = board.frames.filter(frame => cx >= frame.x && cx <= frame.x + frame.w && cy >= frame.y && cy <= frame.y + frame.h);
-      frames.sort((a, b) => a.w * a.h - b.w * b.h);
-      if (frames.length) item.frameId = frames[0].id;
+      const frame = frameAt(item.x + item.w / 2, item.y + item.h / 2);
+      if (frame) item.frameId = frame.id;
       else delete item.frameId;
     }
   }
@@ -740,7 +1028,7 @@
       toast(tabs.length ? `Imported ${tabs.length} open ${tabs.length === 1 ? "tab" : "tabs"}` : "All open websites are already on this canvas");
     }
     if (!isTyping(document.activeElement) && !drag) render();
-    else renderIntro();
+    else { renderIntro(); renderTray(); }
     if (changed) persist();
   }
 
@@ -1050,6 +1338,37 @@
   $("return-browser").addEventListener("click", () => { persist(); bridge.hideCanvas(); });
   $("guide-button").addEventListener("click", () => $("guide").showModal());
   $("import-tabs").addEventListener("click", importTabs);
+  $("tab-tray").addEventListener("keydown", trayKeys);
+  $("tray-add").addEventListener("click", () => {
+    const frameId = $("tray-frame").value;
+    placeTrayTabs(trayOrder(), frameId ? {frameId} : {});
+  });
+  $("tray-close").addEventListener("click", () => closeTrayTabs(trayOrder()));
+  acceptTabDrops($("fit-nav"), {});
+  viewport.addEventListener("dragover", event => {
+    if (!carriesTabs(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    viewport.classList.add("tab-drop");
+    const p = point(event);
+    const target = frameAt(p.x, p.y);
+    document.querySelectorAll(".frame").forEach(node => node.classList.toggle("drop-target", node.dataset.id === target?.id));
+  });
+  viewport.addEventListener("dragleave", event => {
+    if (viewport.contains(event.relatedTarget)) return;
+    viewport.classList.remove("tab-drop");
+    document.querySelectorAll(".frame.drop-target").forEach(node => node.classList.remove("drop-target"));
+  });
+  viewport.addEventListener("drop", event => {
+    if (!carriesTabs(event)) return;
+    event.preventDefault();
+    const p = point(event);
+    const ids = droppedTabs(event);
+    if (ids) placeTrayTabs(ids, {point: p});
+  });
+  // No pointer events reach the page during a drag. One that does means the
+  // drag ended without a dragend, for example after its row was replaced.
+  document.addEventListener("pointerdown", endTrayDrag, true);
   $("empty-import").addEventListener("click", importTabs);
   $("launcher-hint").textContent = isMac ? "⌘ L" : "Ctrl L";
   const launcher = $("address-launcher");

@@ -283,6 +283,7 @@ const GLYPHS = {
 const GLYPH_RULES = [
   [/^orbit-send-to-canvas$/, "canvas"], [/^orbit-focus-canvas$/, "grid"],
   [/^orbit-canvas-page$/, "card"], [/^orbit-canvas-link$/, "link"], [/^orbit-canvas-selection$/, "note"],
+  [/^orbit-canvas-[a-z]+-loose$/, "canvas"], [/^orbit-canvas-[a-z]+-frame-/, "frame"],
   [/^orbit-focus-(extension|manage-extensions)/, "puzzle"], [/^orbit-focus-bookmark/, "star"], [/^orbit-focus-history/, "clock"],
   [/^orbit-focus-privacy$/, "shield"], [/^orbit-focus-(settings|preferences)$/, "gear"],
   [/^orbit-focus-more-tools$/, "grid"], [/^orbit-focus-customize$/, "frame"],

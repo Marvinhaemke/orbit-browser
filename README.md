@@ -45,6 +45,8 @@ Every new tab and every new window opens the **Orbit canvas**; it is also the de
 
 The canvas fills the whole page. Its sidebar and top bar float over it, so the workspace runs edge to edge beneath them. The top bar greets you with the date and a live summary of your open tabs, cards, frames, and notes. Its **Search the web or enter an address** field hands whatever you type to Firefox's real address bar, so search engines, suggestions, and URL handling stay Firefox's own; this also works in focus mode, where the address bar is otherwise hidden. Beside it, shortcuts to your most visited sites open in the same tab (Ctrl+click or middle-click opens a background tab). Remove a shortcut with its **×**, or hide the row with **Hide**. Private windows never show shortcuts.
 
+The sidebar's **Open tabs** tray lists every website open in the window, in tab-strip order. Each row shows the tab's icon, title, and site, plus a chip when the tab already has a card: the frame it sits in, or **Canvas**. Click the chip to pan to that card. Double-click a row or press Enter to switch to the tab. Its **×** (or Delete) closes the tab; a card for it stays on the canvas as a saved website you can reopen. Ctrl+click, Shift+click, Shift+arrow keys, and Ctrl+A select several tabs. Then **Add** places them loose on the canvas or in a frame you choose, and **Close** closes them. To place tabs where you want, drag rows onto the canvas, onto a frame in the sidebar's frame list, or onto **My canvas**. A tab never gets a second card: adding it again moves its existing card. Ctrl+Z undoes a placement.
+
 ## Radial browser interaction
 
 - **Quick right-click on a webpage:** release the button to open page actions. **Open in new tab** sits in the center and uses the clicked link or image when available; otherwise it opens the current page in a new tab.
@@ -61,7 +63,7 @@ The page wheel uses Firefox’s actual context commands for links, images, selec
 
 **Orbit commands** opens from its toolbar button or **Ctrl + Shift + Space** (**Command + Shift + Space** on macOS). Search open tabs and saved frames, then use the arrow keys and Enter to jump to a result. The same command bar opens the canvas and toggles focus mode. Escape dismisses it and returns focus to your previous control.
 
-**Send to canvas** in a webpage's radial menu collects the page, a clicked link, or selected text. Cards keep the website's address and container; text becomes an editable note with its source address. Collecting a link does not create another browser tab. Captures join the current window's workspace, and private captures stay in memory.
+**Send to canvas** in a webpage's radial menu collects the page, a clicked link, or selected text. When the workspace has frames, each capture fans out into **On the canvas** and up to 24 frames, so a capture can go straight into a frame; a card that already exists moves there instead of being duplicated. Cards keep the website's address and container; text becomes an editable note with its source address. Collecting a link does not create another browser tab. Captures join the current window's workspace, and private captures stay in memory.
 
 **Focus mode** is the default: every new browser window opens with the page given room while browser controls become three independent islands. **Alt + Shift + F** toggles it in the current window. To start new windows with the full toolbar instead, open **Orbit commands** and choose **Always start with the full toolbar** (or set `browser.orbit.focus.default` to `false` in `about:config`). Pop-up windows always keep their native layout.
 
@@ -83,11 +85,12 @@ The source implements:
 
 - A pan-and-zoom canvas populated from real browser tabs.
 - Draggable tab cards and named, resizable frames that open their tabs together.
+- An open-tabs tray for switching, closing, and dragging tabs onto the canvas or into frames.
 - Editable sticky notes, connections, freehand drawing, and undo.
 - Radial webpage actions and a held right-button tab switcher, with nested groups and overflow.
 - A radial context menu on the canvas.
 - A searchable native command bar for open tabs, saved frames, and browser actions.
-- Page, link, and selected-text capture into the canvas from the webpage radial menu.
+- Page, link, and selected-text capture into the canvas or a chosen frame from the webpage radial menu.
 - Reversible focus mode with independent floating address, tools, and window controls.
 - Website peeking and comparison through native Gecko browsers and Firefox split views.
 - Session-backed workspace layouts, with private-window data kept in memory.

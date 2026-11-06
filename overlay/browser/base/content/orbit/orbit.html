@@ -16,6 +16,13 @@
     <button class="nav" id="import-tabs"><span class="ui-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 10a8 8 0 0 0-14-3L3 10m0-6v6h6M4 14a8 8 0 0 0 14 3l3-3m0 6v-6h-6"/></svg></span> Import open tabs</button>
     <div class="section-label">FRAMES <button id="sidebar-frame" title="Draw a frame (F)" aria-label="Draw a frame">＋</button></div>
     <div id="frame-list"></div>
+    <div class="section-label" id="tray-label">OPEN TABS <small id="open-count">0</small></div>
+    <div id="tab-tray" role="listbox" aria-multiselectable="true" aria-labelledby="tray-label" aria-describedby="tray-help"></div>
+    <p id="tray-help" hidden>Drag tabs onto the canvas, a frame, or a frame in this list. Enter switches to a tab and Delete closes it. Ctrl or Shift selects several.</p>
+    <div id="tray-actions" hidden>
+      <div class="tray-row"><span id="tray-selected" role="status">1 selected</span><button id="tray-close" type="button" title="Close the selected tabs. Their cards stay on the canvas.">Close</button></div>
+      <div class="tray-row"><select id="tray-frame" aria-label="Where to add the selected tabs"></select><button id="tray-add" type="button" title="Add the selected tabs to the chosen place">Add</button></div>
+    </div>
     <div class="sidebar-bottom"><span class="sparkle" aria-hidden="true">✧</span><strong>Make room for ideas.</strong><p>Drag tabs into a frame.<br>Open the whole frame together.</p><button id="guide-button">Explore the gestures</button><div id="save-status" role="status">Loading workspace…</div></div>
   </aside>
   <main>

@@ -18,8 +18,12 @@ class View {
   destroy() { this.model = null; this.destroyed = true; }
 }
 const captures = [];
+let canvasFrames = [];
 const modules = { OrbitRadialView: View, Orbit: {
-  captureContext(win, context, kind) { captures.push({ win, context, kind }); },
+  captureContext(win, context, kind, frameId = null) {
+    captures.push(frameId === null ? { win, context, kind } : { win, context, kind, frameId });
+  },
+  getFrames: () => canvasFrames,
 }, OrbitInteractions: { dismissTools(win) { win.focusToolsOpen = false; } } };
 globalThis.ChromeUtils = {
   defineESModuleGetters(target, getters) {
@@ -31,7 +35,7 @@ globalThis.JSWindowActorChild = class {};
 globalThis.JSWindowActorParent = class {};
 const load = async name => import(`data:text/javascript;base64,${Buffer.from(await readFile(
   new URL(`../overlay/browser/components/orbit/${name}.sys.mjs`, import.meta.url), "utf8")).toString("base64")}`);
-const { OrbitRadial, buildTabTree, snapshotNativeMenu, executeNativeCommand, canvasCaptureActions } = await load("OrbitRadial");
+const { OrbitRadial, buildTabTree, snapshotNativeMenu, executeNativeCommand, canvasCaptureActions, flatCaptureActions } = await load("OrbitRadial");
 modules.OrbitRadial = OrbitRadial;
 const { OrbitRadialParent } = await load("OrbitRadialParent");
 const { OrbitRadialChild } = await load("OrbitRadialChild");
@@ -172,6 +176,54 @@ test("canvas capture choices accept only web URLs and non-password native select
   assert.equal(canvasCaptureActions(context).some(item => item.captureKind === "selection"), false);
   context.browser.currentURI.spec = "about:preferences";
   assert.deepEqual(canvasCaptureActions(context), []);
+});
+
+test("with frames, each capture fans out to the canvas or one frame", () => {
+  const context = {
+    browser: { currentURI: { spec: "https://example.test/page" } },
+    onLink: true, linkURL: "https://research.test/",
+  };
+  const frames = [{ id: "reading", title: "Reading" }, { id: "later", title: "" }];
+  const fans = canvasCaptureActions(context, frames);
+  assert.deepEqual(fans.map(item => [item.id, item.kind]), [["orbit-canvas-page", "submenu"], ["orbit-canvas-link", "submenu"]]);
+  assert.deepEqual(fans[0].children.map(item => [item.id, item.label, item.frameId]), [
+    ["orbit-canvas-page-loose", "On the canvas", undefined],
+    ["orbit-canvas-page-frame-reading", "Reading", "reading"],
+    ["orbit-canvas-page-frame-later", "Untitled frame", "later"],
+  ]);
+  assert.ok(flatCaptureActions(context, frames).every(item => item.kind === "canvas-capture"));
+  const many = Array.from({ length: 40 }, (_, index) => ({ id: `frame-${index}`, title: `Frame ${index}` }));
+  assert.equal(canvasCaptureActions(context, many)[0].children.length, 25, "the fan lists at most 24 frames");
+  assert.deepEqual(canvasCaptureActions(context, []).map(item => item.kind), ["canvas-capture", "canvas-capture"]);
+});
+
+test("a frame target comes from the saved board, never from the activated item", () => {
+  canvasFrames = [{ id: "reading", title: "Reading" }];
+  try {
+    const f = fixture(); down(f); up(f);
+    const native = f.nativeContext(f.browser, {
+      actor: { manager: { isCurrentGlobal: true, rootFrameLoader: { ownerElement: f.browser } }, browsingContext: { ancestorsAreCurrent: true } },
+    });
+    const branch = f.view.model.items[0];
+    const page = branch.children.find(item => item.id === "orbit-canvas-page");
+    assert.deepEqual(page.children.map(item => item.id), ["orbit-canvas-page-loose", "orbit-canvas-page-frame-reading"]);
+    const previous = captures.length;
+    f.view.model.onActivate({ ...page.children[1], frameId: "forged", captureKind: "link" });
+    assert.deepEqual(captures.at(-1), { win: f.win, context: native.context, kind: "page", frameId: "reading" });
+    assert.equal(captures.length, previous + 1);
+    OrbitRadial.uninit(f.win);
+    const g = fixture(); down(g); up(g);
+    g.nativeContext(g.browser, {
+      actor: { manager: { isCurrentGlobal: true, rootFrameLoader: { ownerElement: g.browser } }, browsingContext: { ancestorsAreCurrent: true } },
+    });
+    const removed = g.view.model.items[0].children[0].children[1];
+    canvasFrames = [];
+    g.view.model.onActivate(removed);
+    assert.equal(captures.length, previous + 1, "a frame deleted since the menu opened files nothing");
+    OrbitRadial.uninit(g.win);
+  } finally {
+    canvasFrames = [];
+  }
 });
 
 test("Send to canvas is reachable in the first ring and activates only the current native descriptor", () => {

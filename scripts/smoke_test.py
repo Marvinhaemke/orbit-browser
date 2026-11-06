@@ -283,6 +283,84 @@ def verify_overlay_launcher(driver, url, result):
     result["checks"].append("Over a page, the canvas search field and Escape keep the canvas in front of Firefox's address bar, which then opens its page in place of the canvas")
 
 
+def click_in_canvas(driver, selector, label):
+    """A trusted pointer click on an element of the overlay canvas document."""
+    point = driver.execute_script('''
+        const doc = document.getElementById("orbit-canvas-frame").contentDocument;
+        const node = doc.querySelector(arguments[0]);
+        if (!node) return null;
+        node.scrollIntoView({block: "nearest"});
+        const box = node.getBoundingClientRect();
+        const frame = doc.defaultView;
+        return {x: Math.round(frame.mozInnerScreenX + box.x + box.width / 2 - window.mozInnerScreenX),
+            y: Math.round(frame.mozInnerScreenY + box.y + box.height / 2 - window.mozInnerScreenY)};
+    ''', script_args=[selector])
+    assert point, f"The canvas has no {label} ({selector})"
+    try:
+        driver.actions.sequence("pointer", "orbit-tray-mouse", {"pointerType": "mouse"}).pointer_move(
+            point["x"], point["y"], origin="viewport").pause(80).click().perform()
+    finally:
+        driver.actions.release()
+
+
+def verify_tab_tray(driver, url, result):
+    """The canvas's open-tabs tray lists real tabs, files a chosen one into a
+    frame, and closes it while its card and the overlay canvas stay."""
+    open_canvas(driver)
+    driver.set_context("chrome")
+    target = url + "tray"
+    selected_before = driver.execute_script("return gBrowser.selectedBrowser.currentURI.spec;")
+    tab_id = driver.execute_script('return window.OrbitChrome.openTab({url: arguments[0], background: true}).id;', script_args=[target])
+    row = f'.tray-tab[data-tab-id="{tab_id}"]'
+    wait_for(driver, '''
+        const doc = document.getElementById("orbit-canvas-frame").contentDocument;
+        const live = window.OrbitChrome.listTabs();
+        return !!doc.querySelector(arguments[0]) &&
+            doc.querySelectorAll(".tray-tab").length === live.length &&
+            doc.getElementById("open-count").textContent === String(live.length);
+    '''.replace("arguments[0]", json.dumps(row)), "the tray lists every open website, including a background tab")
+    driver.execute_script('''
+        const board = window.OrbitChrome.getBoard();
+        if (!board.frames.some(frame => frame.id === "smoke-tray-frame")) {
+            board.frames.push({id: "smoke-tray-frame", title: "Tray frame", color: "#70ded3", x: 3000, y: 3000, w: 600, h: 400});
+            window.OrbitChrome.saveBoard(board);
+        }
+    ''')
+    click_in_canvas(driver, row, "tray row for the background tab")
+    wait_for(driver, '''
+        const doc = document.getElementById("orbit-canvas-frame").contentDocument;
+        return doc.querySelector(arguments[0])?.getAttribute("aria-selected") === "true" &&
+            !doc.getElementById("tray-actions").hidden &&
+            [...doc.getElementById("tray-frame").options].some(option => option.value === "smoke-tray-frame");
+    '''.replace("arguments[0]", json.dumps(row)), "a click selects the row and offers the board's frames")
+    driver.execute_script('document.getElementById("orbit-canvas-frame").contentDocument.getElementById("tray-frame").value = "smoke-tray-frame";')
+    click_in_canvas(driver, "#tray-add", "tray Add button")
+    wait_for(driver, '''
+        const doc = document.getElementById("orbit-canvas-frame").contentDocument;
+        const card = window.OrbitChrome.getBoard().items.find(item => item.type === "tab" && item.tabId === arguments[0]);
+        return card?.frameId === "smoke-tray-frame" && card.url === arguments[1] &&
+            doc.querySelector(arguments[2] + " .tray-place")?.textContent.includes("Tray frame") &&
+            !!doc.querySelector(`.item.card[data-id="${card.id}"]`);
+    '''.replace("arguments[0]", json.dumps(tab_id)).replace("arguments[1]", json.dumps(target)).replace("arguments[2]", json.dumps(row)),
+        "Add files the tab's card into the chosen frame")
+    click_in_canvas(driver, row + " .tray-close", "tray close button")
+    wait_for(driver, '''
+        const doc = document.getElementById("orbit-canvas-frame").contentDocument;
+        return !gBrowser.tabs.some(tab => !tab.closing && tab.linkedBrowser.currentURI.spec === arguments[0]) &&
+            !doc.querySelector(arguments[1]);
+    '''.replace("arguments[0]", json.dumps(target)).replace("arguments[1]", json.dumps(row)), "the tray's close button closes the real tab")
+    state = driver.execute_script('''
+        const card = window.OrbitChrome.getBoard().items.find(item => item.type === "tab" && item.url === arguments[0]);
+        return {overlay: !document.getElementById("orbit-canvas-overlay").hidden, card: card?.frameId || null,
+            selected: gBrowser.selectedBrowser.currentURI.spec};
+    ''', script_args=[target])
+    assert state["overlay"], f"Closing a tab from the tray hid the canvas: {state}"
+    assert state["card"] == "smoke-tray-frame", f"The closed tab's card left the canvas: {state}"
+    assert state["selected"] == selected_before, f"Closing a background tab changed the selected page: {state}"
+    result["tab_tray"] = {"tab": target, "frame": state["card"]}
+    result["checks"].append("The canvas tray lists real tabs, files one into a frame, and closes it while its card and the canvas stay")
+
+
 def verify_native_newtab_ux(driver, fixture_handle, url, result, folder):
     """Exercise the browser's real new-tab commands and isolated workspaces."""
     checks = result["checks"]
@@ -604,6 +682,7 @@ def main() -> None:
 
         verify_native_newtab_ux(driver, fixture_handle, url, result, report.parent)
         verify_overlay_launcher(driver, url, result)
+        verify_tab_tray(driver, url, result)
 
         open_canvas(driver)
         driver.execute_script('window.OrbitChrome.peek({url: arguments[0]});', script_args=[url + "peek"])

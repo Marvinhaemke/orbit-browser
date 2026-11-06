@@ -88,7 +88,45 @@ button:active:not(:disabled) { transform: translateY(1px); }
 .frame-nav strong { font-weight: 500; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; flex: 1; }
 .frame-nav small { font-size: 10px; color: var(--orbit-muted); }
 .frame-swatch { width: 9px; height: 9px; flex-shrink: 0; border-radius: 3px; background: var(--accent); box-shadow: inset 0 1px 1px #ffffff80; }
-#frame-list { overflow: auto; scrollbar-width: thin; scrollbar-color: var(--orbit-line) transparent; }
+#frame-list { flex: 0 1 auto; min-height: 0; max-height: 26vh; overflow: auto; scrollbar-width: thin; scrollbar-color: var(--orbit-line) transparent; }
+.frame-nav.drop-target, #fit-nav.drop-target { background: var(--orbit-accent-wash); color: var(--orbit-text); box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent, var(--orbit-lagoon)) 70%, transparent); }
+#tray-label small { font-size: 10px; letter-spacing: 0; font-weight: 650; min-width: 22px; text-align: center; padding: 2px 5px; border-radius: 8px; background: var(--orbit-raised); border: 1px solid var(--orbit-highlight); }
+/* The open-tabs tray takes the sidebar's spare height and scrolls inside it. */
+#tab-tray { flex: 1 1 0; min-height: 84px; overflow: auto; margin: 0 -4px; padding: 0 4px 4px; scrollbar-width: thin; scrollbar-color: var(--orbit-line) transparent; }
+.tray-tab { display: flex; align-items: center; gap: 9px; min-height: 42px; padding: 5px 4px 5px 10px; margin-bottom: 2px; border-radius: 12px; font-size: 12px; color: var(--orbit-muted); user-select: none; cursor: grab; }
+.tray-tab:hover { background: var(--orbit-accent-wash); }
+.tray-tab[aria-selected="true"] { background: linear-gradient(135deg, var(--orbit-accent-wash), #8c86f412); box-shadow: var(--orbit-inset-shadow); }
+.tray-tab:focus-visible { outline-offset: -2px; }
+.tray-tab.dragging { opacity: .55; }
+.tray-icon { width: 18px; height: 18px; flex-shrink: 0; border-radius: 6px; display: grid; place-items: center; font-size: 10px; font-weight: 700; color: var(--orbit-accent-ink); background: var(--orbit-raised); border: 1px solid var(--orbit-highlight); }
+img.tray-icon { object-fit: contain; background: none; border: 0; }
+.tray-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.tray-text strong { font-weight: 500; color: var(--orbit-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tray-tab.active .tray-text strong::before { content: ""; display: inline-block; width: 6px; height: 6px; margin: 0 6px 1px 0; border-radius: 50%; background: var(--orbit-lagoon); }
+.tray-text small { font-size: 10px; display: flex; align-items: center; gap: 5px; min-width: 0; }
+.tray-text small > span:first-child { flex: 0 3 auto; min-width: 28px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tray-place { flex: 0 0 auto; max-width: 62%; min-width: 0; display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px 1px 4px; border-radius: 7px; font-size: 9.5px; color: var(--orbit-accent-ink); background: color-mix(in srgb, var(--accent, var(--orbit-lagoon)) 14%, transparent); cursor: pointer; }
+.tray-place:hover { background: color-mix(in srgb, var(--accent, var(--orbit-lagoon)) 26%, transparent); }
+.tray-place .frame-swatch { width: 7px; height: 7px; }
+.tray-place > span:last-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tray-close { width: 24px; height: 24px; flex-shrink: 0; border-radius: 8px; font-size: 15px; line-height: 1; color: var(--orbit-muted); opacity: 0; }
+.tray-tab:hover .tray-close, .tray-tab:focus-visible .tray-close, .tray-tab[aria-selected="true"] .tray-close { opacity: 1; }
+.tray-close:hover, #tray-close:hover { color: #c2416a; background: #e0607e1f; }
+/* With tabs to show, the welcome text gives the tray its room. */
+.sidebar.has-tabs .sidebar-bottom { padding-top: 10px; }
+.sidebar.has-tabs .sidebar-bottom :is(.sparkle, strong, p) { display: none; }
+.sidebar.has-tabs #save-status { margin-top: 10px; padding-top: 10px; }
+.tray-empty { margin: 2px 12px; font-size: 11px; line-height: 1.6; color: var(--orbit-muted); }
+#tray-actions { display: grid; grid-template-columns: minmax(0, 1fr); gap: 7px; margin-top: 6px; padding: 10px 2px 0; border-top: 1px solid var(--orbit-line); font-size: 11px; }
+.tray-row { display: flex; align-items: center; gap: 6px; }
+#tray-selected { flex: 1; padding-left: 8px; color: var(--orbit-muted); }
+#tray-frame { flex: 1 1 0; min-width: 0; width: 0; height: 30px; padding: 0 6px; border: 1px solid var(--orbit-line); border-radius: 10px; background: var(--orbit-raised); color: var(--orbit-text); font-size: 11px; }
+#tray-add, #tray-close { height: 30px; padding: 0 11px; border-radius: 10px; font-size: 11px; font-weight: 650; }
+#tray-add { color: var(--orbit-accent-ink); background: var(--orbit-accent-wash); }
+#tray-add:hover { background: color-mix(in srgb, var(--orbit-lagoon) 30%, transparent); }
+#tray-close { color: var(--orbit-muted); }
+.canvas-viewport.tab-drop { box-shadow: inset 0 0 0 3px color-mix(in srgb, var(--orbit-lagoon) 55%, transparent); }
+.frame.drop-target { border-width: 2.5px; background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 22%, transparent), transparent); }
 .sidebar-bottom { margin-top: auto; padding: 25px 12px 0; }
 .sparkle { display: block; font-size: 29px; color: var(--orbit-accent-ink); margin-bottom: 10px; }
 .sidebar-bottom strong { font-size: 13px; font-weight: 650; letter-spacing: -.1px; }
@@ -315,9 +353,11 @@ dialog input, dialog select { width: 100%; display: block; margin-top: 9px; bord
   .canvas-hint { font-size: 8px; }
   .guide-grid { grid-template-columns: 1fr; }
 }
+@media (max-height: 860px) {
+  .workspace-title { margin-block: 22px 16px; }
+  .section-label { margin-top: 18px; }
+}
 @media (max-height: 640px) {
-  .sidebar-bottom { padding-top: 12px; }
-  .sidebar-bottom .sparkle, .sidebar-bottom p { display: none; }
   #save-status { margin-top: 16px; padding-top: 12px; }
   .breadcrumb { display: none; }
   .launcher { height: 42px; }
@@ -336,7 +376,8 @@ dialog input, dialog select { width: 100%; display: block; margin-top: 9px; bord
   .sidebar, .board-bar, .card, .toolbar, .zoom-controls, .button, dialog, #radial, .radial-center, .frame, .note, .launcher, .shortcut-open, #radial button, kbd, .shortcuts-toggle, .shortcuts-show { background: Canvas; border-color: ButtonBorder; backdrop-filter: none; }
   #radial button .glyph { stroke: ButtonText; }
   .note textarea, .note-grip { color: CanvasText; }
-  .nav.active, .toolbar button[aria-pressed="true"] { outline: 1px solid Highlight; color: Highlight; }
+  .nav.active, .toolbar button[aria-pressed="true"], .tray-tab[aria-selected="true"] { outline: 1px solid Highlight; color: Highlight; }
+  .frame-nav.drop-target, #fit-nav.drop-target, .frame.drop-target { outline: 2px dashed Highlight; }
   .button.primary { color: ButtonText; background: ButtonFace; }
   .orbit-logo { forced-color-adjust: auto; }
   #toast { color: CanvasText; background: Canvas; border: 1px solid CanvasText; }
