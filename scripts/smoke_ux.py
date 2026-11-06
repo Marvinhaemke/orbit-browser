@@ -1076,19 +1076,25 @@ def verify_default_focus_window(driver, result):
     defaults = driver.execute_script('''
         const branch = Services.prefs.getDefaultBranch("");
         return {homepage: branch.getStringPref("browser.startup.homepage", ""),
+            startup: branch.getIntPref("browser.startup.page", -1),
             newTab: ChromeUtils.importESModule("resource:///modules/AboutNewTab.sys.mjs").AboutNewTab.newTabURL};''')
     result["default_pages"] = defaults
-    assert defaults == {"homepage": CANVAS_URI, "newTab": CANVAS_URI}, defaults
+    assert defaults["homepage"] == CANVAS_URI and defaults["newTab"] == CANVAS_URI, defaults
+    # Firefox's getNewWindowArgs uses the home page only for startup pages 1 and 3.
+    assert defaults["startup"] in (1, 3), defaults
     state = driver.execute_async_script('''
         const complete = arguments[arguments.length - 1];
         const canvasURI = arguments[0];
         Services.prefs.setBoolPref("browser.orbit.focus.default", true);
-        // Use Orbit's shipped home page for this window only.
+        // Use Orbit's shipped home page and startup choice for this window only;
+        // the disposable profile otherwise pins about:blank and startup page 0.
         Services.prefs.clearUserPref("browser.startup.homepage");
+        Services.prefs.clearUserPref("browser.startup.page");
         const opened = OpenBrowserWindow();
         const finish = state => {
             Services.prefs.setBoolPref("browser.orbit.focus.default", false);
             Services.prefs.setStringPref("browser.startup.homepage", "about:blank");
+            Services.prefs.setIntPref("browser.startup.page", 0);
             opened.close();
             complete(state);
         };
