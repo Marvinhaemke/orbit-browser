@@ -501,18 +501,47 @@ jobs:
             throw 'Apps and Features registration is wrong'
           }
 
-          # Started without arguments, as a pinned taskbar button does, Orbit adopts the installed profile.
-          $orbit = Start-Process "$target\orbit.exe" -ArgumentList '-headless' -PassThru
-          $deadline = (Get-Date).AddSeconds(120)
-          $claimed = $false
-          while ((Get-Date) -lt $deadline -and !$claimed) {
-            Start-Sleep -Seconds 2
-            $profiles = if (Test-Path "$orbitData\profiles.ini") { [IO.File]::ReadAllText("$orbitData\profiles.ini") } else { '' }
-            $compat = if (Test-Path "$profileDir\compatibility.ini") { [IO.File]::ReadAllText("$profileDir\compatibility.ini") } else { '' }
-            $claimed = ($profiles -match ('(?m)^\[Install[0-9A-F]+\]\r?\n(?:[^\[\r\n][^\r\n]*\r?\n)*?Default=' + [regex]::Escape($profileDir) + '\r?$')) -and ($compat -match 'LastVersion=')
-            if ($orbit.HasExited -and !$claimed) { throw "Orbit exited early with $($orbit.ExitCode)" }
+          function Write-OrbitDiagnostics([datetime]$Since) {
+            Write-Host "--- Orbit processes"
+            Get-CimInstance Win32_Process -Filter "Name='orbit.exe'" | ForEach-Object { Write-Host "$($_.ProcessId) (parent $($_.ParentProcessId)): $($_.CommandLine)" }
+            Write-Host "--- Profile files written since $($Since.ToString('HH:mm:ss'))"
+            foreach ($root in $env:APPDATA, $env:LOCALAPPDATA, $env:TEMP, $target) {
+              Get-ChildItem $root -Recurse -Depth 6 -Force -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.LastWriteTime -ge $Since -and $_.Name -in 'profiles.ini', 'installs.ini', 'compatibility.ini', 'parent.lock', 'times.json', 'prefs.js' } |
+                ForEach-Object { Write-Host "$($_.LastWriteTime.ToString('HH:mm:ss')) $($_.FullName)" }
+            }
           }
-          if (!$claimed) { throw "Orbit did not adopt the installed profile:`n$profiles`n$compat" }
+          function Wait-ProfileStart([datetime]$Deadline, $Process, [switch]$RequireClaim) {
+            while ((Get-Date) -lt $Deadline) {
+              Start-Sleep -Seconds 2
+              $profiles = if (Test-Path "$orbitData\profiles.ini") { [IO.File]::ReadAllText("$orbitData\profiles.ini") } else { '' }
+              $compat = if (Test-Path "$profileDir\compatibility.ini") { [IO.File]::ReadAllText("$profileDir\compatibility.ini") } else { '' }
+              $claim = $profiles -match ('(?m)^\[Install[0-9A-F]+\]\r?\n(?:[^\[\r\n][^\r\n]*\r?\n)*?Default=' + [regex]::Escape($profileDir) + '\r?$')
+              if (($compat -match 'LastVersion=') -and ($claim -or !$RequireClaim)) { return $true }
+              if ($Process.HasExited) { Write-Host "Orbit exited with $($Process.ExitCode)"; break }
+            }
+            Write-Host "--- profiles.ini`n$profiles`n--- compatibility.ini`n$compat"
+            return $false
+          }
+          Write-Host "--- application.ini"; Get-Content "$target\application.ini" | Write-Host
+          Write-OrbitDiagnostics (Get-Date).AddMinutes(-1)
+
+          # Started without arguments, as a pinned taskbar button does, Orbit adopts the installed profile.
+          $launched = Get-Date
+          $orbit = Start-Process "$target\orbit.exe" -ArgumentList '-headless' -PassThru
+          if (!(Wait-ProfileStart $launched.AddSeconds(120) $orbit -RequireClaim)) {
+            Write-OrbitDiagnostics $launched
+            Stop-InstalledOrbit
+            # Control: does the same installation start with its profile named explicitly?
+            $controlStart = Get-Date
+            $control = Start-Process "$target\orbit.exe" -ArgumentList "-headless -profile `"$profileDir`"" -PassThru
+            $started = Wait-ProfileStart $controlStart.AddSeconds(90) $control
+            Write-Host "Control start with -profile wrote its compatibility.ini: $started"
+            Write-OrbitDiagnostics $controlStart
+            Stop-InstalledOrbit
+            throw 'Orbit did not adopt the installed profile when started without arguments'
+          }
+          Write-Host "Orbit adopted the installed profile after $([int]((Get-Date) - $launched).TotalSeconds) seconds"
           if (Test-Path "$orbitData\Profiles") { throw 'Orbit created a second profile instead of using the installed one' }
 
           # Setup must not replace a running browser.
