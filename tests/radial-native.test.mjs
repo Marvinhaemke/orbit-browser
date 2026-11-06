@@ -310,11 +310,13 @@ test("quick release waits for native descriptor, then command restores content f
 test("Open in new tab appears only in the center and forwards the original link command", () => {
   const f = fixture();
   const original = new NativeNode("menuitem", "context-openlinkintab", "Open Link in New Tab");
+  original.setAttribute("accesskey", "T");
   f.popup.append(original);
   f.win.document.getElementById = id => id === original.id ? original : id === f.popup.id ? f.popup : undefined;
   f.nativeContext(f.browser, {onLink: true});
   assert.equal(f.view.model.items.some(item => item.id === original.id), false);
   assert.equal(f.view.model.centerItem.label, "Open in new tab");
+  assert.equal(f.view.model.centerItem.accesskey, "T", "the center keeps the native item's access key");
   f.view.model.onActivate(f.view.model.centerItem);
   assert.equal(original.commands, 1);
   assert.equal(f.win.gContextMenu, null);

@@ -244,6 +244,51 @@
 }
 /* The caption reserves a fixed box clear of every circle; its visible pill
    shrinks to the hovered command's name and context. */
+/* A corner menu's hub is the window corner itself: a quarter-circle button. */
+.orbit-radial-root[data-corner] .orbit-radial-center {
+  top: 50%;
+  transform: none;
+  width: calc(var(--orbit-center-size) / 2);
+  height: calc(var(--orbit-center-size) / 2);
+  gap: 3px;
+}
+.orbit-radial-root[data-corner="top-left"] .orbit-radial-center {
+  left: 50%;
+  border-radius: 0 0 100% 0;
+  padding: 2px 12px 12px 2px;
+}
+.orbit-radial-root[data-corner="top-right"] .orbit-radial-center {
+  left: auto;
+  right: 50%;
+  border-radius: 0 0 0 100%;
+  padding: 2px 2px 12px 12px;
+}
+.orbit-radial-root[data-corner] .orbit-radial-center-icon.orbit-radial-vector-icon { width: 20px; height: 20px; }
+.orbit-radial-root[data-corner] .orbit-radial-center-label { font-size: 10px; max-width: 54px; }
+.orbit-radial-root[data-corner] .orbit-radial-caption { display: none; }
+.orbit-radial-center-key {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  min-width: 16px;
+  height: 16px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  font-size: 9.5px;
+  font-weight: 700;
+  background: var(--orbit-key-surface);
+  color: var(--orbit-key-ink);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.orbit-radial-root[data-corner="top-left"] .orbit-radial-center-key { left: 40px; top: 6px; right: auto; bottom: auto; }
+.orbit-radial-root[data-corner="top-right"] .orbit-radial-center-key { right: 40px; top: 6px; bottom: auto; }
+/* Captions start beside the corner menu instead of centring in their slot. */
+.orbit-radial-root[data-corner="top-left"] .orbit-radial-command-label { justify-content: flex-start; }
+.orbit-radial-root[data-corner="top-right"] .orbit-radial-command-label { justify-content: flex-end; }
+.orbit-radial-keyboard .orbit-radial-center-key { opacity: 1; }
+
 .orbit-radial-command-label {
   position: absolute;
   box-sizing: border-box;
@@ -361,6 +406,7 @@
   .orbit-radial-active .orbit-radial-monogram-label { fill: HighlightText; }
   .orbit-radial-key-surface { fill: ButtonText; stroke: ButtonText; }
   .orbit-radial-key-label { fill: Canvas; }
+  .orbit-radial-center-key { background: ButtonText; color: Canvas; }
   .orbit-radial-pointer { stroke: Highlight; }
   .orbit-radial-command-pill { background: Canvas; color: CanvasText; border-color: ButtonText; box-shadow: none; }
   .orbit-radial-command-detail, .orbit-radial-center-detail { color: CanvasText; }

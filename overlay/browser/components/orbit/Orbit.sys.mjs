@@ -989,20 +989,46 @@ class OrbitWindow {
 
 export const Orbit = {
   _windows: new WeakMap(),
+  _initialized: new WeakSet(),
   _widgetCreated: false,
   _newTabConfigured: false,
 
-  init(win) {
-    if (!win.gBrowser || this._windows.has(win)) {
+  /** Runs from browser-before-ui-startup, before the first window opens, so
+   * even that window's first new tab is the canvas. The canvas is also the
+   * shipped default home page (branding prefs), which a person can change. */
+  beforeUIStartup() {
+    this.configureNewTab();
+  },
+
+  configureNewTab() {
+    if (this._newTabConfigured) {
       return;
     }
-    if (!this._newTabConfigured) {
-      // Firefox's native commands and initial-page URL bar handling already
-      // consume this service. Use a real packaged tab, not a blank-tab overlay.
-      lazy.AboutNewTab.newTabURL = BOARD_URI;
-      this._newTabConfigured = true;
+    // Firefox's native commands and initial-page URL bar handling already
+    // consume this service. Use a real packaged tab, not a blank-tab overlay.
+    lazy.AboutNewTab.newTabURL = BOARD_URI;
+    this._newTabConfigured = true;
+  },
+
+  /** A canvas can load as a window's home page before that window's delayed
+   * startup. It only needs the window's bridge; chrome integration still
+   * waits for init() from delayed startup. */
+  windowState(win) {
+    let state = this._windows.get(win);
+    if (!state) {
+      state = new OrbitWindow(win);
+      this._windows.set(win, state);
     }
-    this._windows.set(win, new OrbitWindow(win));
+    return state;
+  },
+
+  init(win) {
+    if (!win.gBrowser || this._initialized.has(win)) {
+      return;
+    }
+    this._initialized.add(win);
+    this.configureNewTab();
+    this.windowState(win);
     lazy.OrbitTheme.init(win);
     lazy.OrbitRadial.init(win);
     lazy.OrbitInteractions.init(win);
@@ -1062,8 +1088,8 @@ export const Orbit = {
         !win.gBrowser.getTabForBrowser(browser)) {
       throw new Error("Orbit requires a canvas in a native browser tab");
     }
-    this.init(win);
-    return this._windows.get(win).connectCanvas(document, browser);
+    this.configureNewTab();
+    return this.windowState(win).connectCanvas(document, browser);
   },
 
   closeBoard(win) {
@@ -1081,5 +1107,6 @@ export const Orbit = {
     lazy.OrbitTheme.uninit(win);
     this._windows.get(win)?.destroy();
     this._windows.delete(win);
+    this._initialized.delete(win);
   },
 };

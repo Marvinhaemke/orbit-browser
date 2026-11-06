@@ -3,7 +3,6 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 const lazy = {};
-const HTML_NS = "http://www.w3.org/1999/xhtml";
 ChromeUtils.defineESModuleGetters(lazy, {
   Orbit: "moz-src:///browser/components/orbit/Orbit.sys.mjs",
   OrbitRadial: "moz-src:///browser/components/orbit/OrbitRadial.sys.mjs",
@@ -51,6 +50,8 @@ function trustedActivation(event, item = null) {
 /** A focus-mode entry point into original Firefox controls. Native extension
  * permissions, activeTab grants, panel contents, and toolbar placements remain
  * owned by Firefox. Only a real trusted activation invokes an action. */
+const CENTER_ITEM = Object.freeze({id: "orbit-focus-new-tab", label: "New tab", icon: "＋", accesskey: "N"});
+
 export class OrbitFocusTools {
   constructor(win, callbacks = {}) {
     this.win = win;
@@ -65,42 +66,6 @@ export class OrbitFocusTools {
     this.popups = new Set();
     this.anchorTimer = null;
     this.pendingNative = false;
-    this.trigger = this.doc.createElementNS(HTML_NS, "button");
-    this.trigger.id = "orbit-focus-tools-trigger";
-    this.trigger.type = "button";
-    this.trigger.hidden = true;
-    this.trigger.setAttribute("aria-label", "Open browser tools");
-    this.trigger.setAttribute("aria-haspopup", "menu");
-    this.trigger.setAttribute("aria-controls", "orbit-focus-tools-menu");
-    this.trigger.setAttribute("aria-expanded", "false");
-    this.trigger.title = "Browser tools, extensions, and settings";
-    const mark = this.doc.createElementNS(HTML_NS, "img");
-    mark.src = "chrome://browser/content/orbit/orbit.svg";
-    mark.alt = "";
-    mark.width = 24;
-    mark.height = 24;
-    this.trigger.append(mark);
-    this.doc.documentElement.append(this.trigger);
-    this.listen(this.trigger, "pointerenter", event => {
-      if (!event.isTrusted || !this.enabled) return;
-      this.callbacks.onPointerEnter?.();
-      this.open();
-    });
-    this.listen(this.trigger, "pointerleave", event => {
-      if (event.isTrusted) this.callbacks.onPointerLeave?.();
-    });
-    this.listen(this.trigger, "click", event => {
-      if (!event.isTrusted || event.button !== 0 || !this.enabled) return;
-      this.open({focus: true});
-      this.view.panel?.focus({preventScroll: true});
-    });
-    this.listen(this.trigger, "keydown", event => {
-      if (!event.isTrusted || event.repeat || event.isComposing || !this.enabled ||
-          !["Enter", " "].includes(event.key)) return;
-      event.preventDefault(); event.stopPropagation();
-      this.open({focus: true});
-      this.view.panel?.focus({preventScroll: true});
-    });
     this.listen(win, "popupshowing", event => this.popupShowing(event), true);
     this.listen(win, "popuphidden", event => this.popupHidden(event), true);
     this.listen(win, "blur", () => this.close("blur"));
@@ -118,7 +83,6 @@ export class OrbitFocusTools {
 
   setEnabled(enabled) {
     this.enabled = enabled === true && !this.disposed;
-    this.trigger.hidden = !this.enabled;
     if (this.enabled) return;
     this.close("focus-exit");
     for (const popup of this.popups) popup.hidePopup?.();
@@ -128,19 +92,17 @@ export class OrbitFocusTools {
   }
 
   contains(node) {
-    return !!node && (this.trigger.contains(node) || !!this.view.root?.contains(node) || !!this.anchor?.contains(node));
+    return !!node && (!!this.view.root?.contains(node) || !!this.anchor?.contains(node));
   }
 
-  /** Non-interactive pointer corridor from the physical corner into the menu.
-   * It keeps a slow diagonal approach alive without stealing page events. */
+  /** The quarter menu grows from the window corner. Its whole quarter disc,
+   * plus a small margin, keeps it open while the pointer crosses the
+   * decorative gaps between circles; nothing there intercepts page events. */
   ownsPointer(x, y) {
     const geometry = this.view.geometry;
     if (!this.visible || !geometry || !Number.isFinite(x) || !Number.isFinite(y)) return false;
     const {center, radius} = geometry;
-    const menu = x >= center.x - radius - 24 && x <= center.x + radius + 24 &&
-      y >= center.y - radius - 24 && y <= center.y + radius + 24;
-    const corridor = x >= 0 && y >= 0 && x <= center.x && y <= center.y;
-    return menu || corridor;
+    return Math.hypot(x - center.x, y - center.y) <= radius + 24;
   }
 
   items() {
@@ -168,13 +130,10 @@ export class OrbitFocusTools {
         {id: "orbit-focus-privacy", label: "Privacy settings", icon: "⌖", accesskey: "P"},
         {id: "orbit-focus-more-tools", label: "More browser tools", icon: "▦", accesskey: "T"},
         {id: "orbit-focus-customize", label: "Customize controls", icon: "▣", accesskey: "C"},
+        {id: "orbit-focus-browser-menu", label: "Browser menu", icon: "•••", accesskey: "M"},
       ]},
-      // Focus mode conceals the tab strip, so its New Tab entry lives here.
-      {id: "orbit-focus-tabs", label: "Tabs", icon: "▣", accesskey: "T", children: [
-        {id: "orbit-focus-new-tab", label: "New tab", icon: "＋", accesskey: "N"},
-        {id: "orbit-focus-canvas", label: "Open canvas", icon: "▦", accesskey: "O"},
-      ]},
-      {id: "orbit-focus-browser-menu", label: "Browser menu", icon: "•••", accesskey: "M"},
+      {id: "orbit-focus-canvas", label: "Canvas", icon: "▦", accesskey: "A"},
+      {id: "orbit-focus-commands", label: "Orbit commands", icon: "⌖", accesskey: "O"},
       {id: "orbit-focus-exit", label: "Exit focus", icon: "↗", accesskey: "X"},
     ];
   }
@@ -187,15 +146,16 @@ export class OrbitFocusTools {
       this.previousFocus = this.win.gBrowser.selectedBrowser;
     }
     this.visible = true;
-    this.trigger.setAttribute("aria-expanded", "true");
     this.callbacks.onVisibilityChange?.(true);
+    // A quarter circle in the window corner. Its hub, the corner itself, opens
+    // a new tab because focus mode conceals the tab strip.
     this.view.show({
-      mode: "focus-tools", center: {x: 220, y: 220}, items: this.items(), focus,
-      centerItem: {id: "orbit-focus-commands", label: "Orbit commands", icon: "⌖"},
+      mode: "focus-tools", corner: "top-left", items: this.items(), focus,
+      centerItem: {...CENTER_ITEM},
       onActivate: (node, event) => this.activate(node, event),
       onDismiss: reason => this.dismissed(reason),
     });
-    // Keep the same pointer grace as the corner trigger and the other islands.
+    // Keep the same pointer grace as the corner hotzone and the other islands.
     // The backing remains decorative and never intercepts a webpage click.
     const root = this.view.root;
     if (this.listenedRoot !== root) {
@@ -215,11 +175,10 @@ export class OrbitFocusTools {
   dismissed(reason) {
     if (!this.visible) return;
     this.visible = false;
-    this.trigger.setAttribute("aria-expanded", "false");
     this.callbacks.onVisibilityChange?.(false);
     // A hover menu never owns focus. Closing it must not interrupt an address
     // edit or a text field on the webpage underneath it.
-    const ownedFocus = this.view.root?.contains(this.doc.activeElement) || this.trigger.contains(this.doc.activeElement);
+    const ownedFocus = !!this.view.root?.contains(this.doc.activeElement);
     if (ownedFocus && (reason === "escape" || reason === "dismiss" || reason === "conceal")) {
       const previous = this.previousFocus;
       const address = this.doc.getElementById("urlbar-container");
@@ -310,9 +269,10 @@ export class OrbitFocusTools {
   activate(node, event) {
     if (this.disposed || !this.visible) return;
     const id = node?.id;
-    const current = this.items().flatMap(item => item.children || [item]).find(item => item.id === id);
+    const current = id === CENTER_ITEM.id ? CENTER_ITEM :
+      this.items().flatMap(item => item.children || [item]).find(item => item.id === id);
     if (!trustedActivation(event, current)) return;
-    if (id !== "orbit-focus-commands" && (!current || current.disabled || current.children)) return;
+    if (!current || current.disabled || current.children) return;
     const win = this.win;
     let anchor = null;
     let run;
@@ -385,6 +345,5 @@ export class OrbitFocusTools {
     this.releaseAnchor();
     for (const cleanup of this.cleanups.splice(0)) cleanup();
     this.view.destroy();
-    this.trigger.remove();
   }
 }

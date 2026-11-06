@@ -174,10 +174,13 @@ def create_native_note(driver, text):
     driver.set_context("content")
     click_canvas_element(driver, driver.find_element(By.CSS_SELECTOR, '[data-tool="note"]'))
     point = driver.execute_script('''
-        const viewport = gBrowser.selectedBrowser.contentDocument.getElementById("viewport");
+        const doc = gBrowser.selectedBrowser.contentDocument;
+        const viewport = doc.getElementById("viewport");
         const box = viewport.getBoundingClientRect();
+        // The canvas fills the page; stay clear of its floating top menu.
+        const header = doc.querySelector(".board-header").getBoundingClientRect();
         return {x: viewport.ownerDocument.defaultView.mozInnerScreenX + box.right - 250 - window.mozInnerScreenX,
-            y: viewport.ownerDocument.defaultView.mozInnerScreenY + box.top + 150 - window.mozInnerScreenY};
+            y: viewport.ownerDocument.defaultView.mozInnerScreenY + Math.max(box.top + 150, header.bottom + 40) - window.mozInnerScreenY};
     ''')
     driver.actions.sequence("pointer", "orbit-native-ux-mouse", {"pointerType": "mouse"}).pointer_move(
         round(point["x"]), round(point["y"]), origin="viewport").click().perform()
@@ -223,14 +226,21 @@ def verify_canvas_launcher(driver, result):
             launcher: doc.getElementById("address-launcher").value,
             shortcutRows: doc.querySelectorAll("#shortcut-list .shortcut").length,
             shortcutsHidden: doc.getElementById("shortcuts").hidden,
-            value: gURLBar.value, uri: gBrowser.selectedBrowser.currentURI.spec};
+            value: gURLBar.value, uri: gBrowser.selectedBrowser.currentURI.spec,
+            fullPage: (() => {
+                const view = doc.getElementById("viewport").getBoundingClientRect();
+                return Math.abs(view.width - doc.defaultView.innerWidth) < 1 && Math.abs(view.height - doc.defaultView.innerHeight) < 1;
+            })(),
+            floating: doc.defaultView.getComputedStyle(doc.querySelector(".sidebar")).position === "fixed" &&
+                doc.defaultView.getComputedStyle(doc.querySelector(".board-header")).position === "absolute"};
     ''')
     result["canvas_launcher"] = state
     assert state["greeting"].startswith("Good ") and state["summary"], state
     assert state["uri"] == CANVAS_URI and not state["value"] and not state["launcher"], state
+    assert state["fullPage"] and state["floating"], state
     # A fresh disposable profile has no frequent sites, so the row stays out of the way.
     assert state["shortcutsHidden"] == (state["shortcutRows"] == 0), state
-    result["checks"].append("The canvas greeting renders and its search field focuses Firefox's real address bar without navigating")
+    result["checks"].append("The canvas fills the whole page under floating side and top menus, its greeting renders, and its search field focuses Firefox's real address bar without navigating")
 
 
 def verify_native_newtab_ux(driver, fixture_handle, url, result, folder):

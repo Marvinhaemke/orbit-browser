@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {pageRadialItems, layoutRadialRings, radialSectorPath, hitRadialGeometry, glyphName, monogram,
-  radialDetail, normalizedAccessKey} from "../overlay/browser/components/orbit/OrbitRadialView.sys.mjs";
+  radialDetail, normalizedAccessKey, fitRadialLabel} from "../overlay/browser/components/orbit/OrbitRadialView.sys.mjs";
 
 test("pagination keeps every original action reachable through bounded rings", () => {
   const source = Array.from({length: 133}, (_, index) => ({id: `native-${index}`, label: `Tab ${index}`}));
@@ -243,4 +243,40 @@ test("hover captions add plain context: host, tab counts, options and availabili
   assert.equal(normalizedAccessKey({accesskey: "T"}), "t");
   assert.equal(normalizedAccessKey({accesskey: "ab"}), "");
   assert.equal(normalizedAccessKey({}), "");
+});
+
+test("the corner tools quarter keeps every command on screen, hittable and apart, with the corner as its hub", () => {
+  for (const [width, height] of [[1400, 1000], [1280, 800], [800, 600], [420, 320]]) {
+    for (const [counts, parents] of [[[8], []], [[8, 5], [4]], [[8, 3], [0]], [[8, 3], [7]], [[8, 8], [2]], [[3], []]]) {
+      const geometry = layoutRadialRings({width, height, center: {x: 500, y: 500}, counts, parentIndices: parents, corner: "top-left"});
+      assert.deepEqual(geometry.center, {x: 0, y: 0}, "the hub is the window corner, wherever the pointer was");
+      assert.deepEqual(hitRadialGeometry(geometry, 8, 8), {center: true});
+      const sectors = geometry.rings.flatMap(ring => ring.sectors);
+      for (const ring of geometry.rings) {
+        for (const sector of ring.sectors) {
+          assert.ok(sector.x - sector.targetRadius >= 0 && sector.y - sector.targetRadius >= 0, `${width}x${height} ${counts}`);
+          assert.ok(sector.x + sector.targetRadius <= width && sector.y + sector.targetRadius <= height);
+          assert.ok(sector.targetRadius * 2 >= 44, "corner targets stay comfortably clickable");
+          assert.deepEqual(hitRadialGeometry(geometry, sector.x, sector.y), {depth: ring.depth, index: sector.index});
+        }
+      }
+      for (const a of sectors) for (const b of sectors) {
+        if (a !== b) assert.ok(Math.hypot(a.x - b.x, a.y - b.y) > a.targetRadius + b.targetRadius, "commands never overlap");
+      }
+      if (geometry.rings[1]) {
+        assert.equal(geometry.rings[1].fan, true);
+        assert.ok(geometry.rings[1].inner > geometry.rings[0].outer, "a fan opens beyond the root quarter");
+      }
+    }
+  }
+  const compact = layoutRadialRings({width: 1400, height: 1000, center: {x: 0, y: 0}, counts: [8], corner: "top-left"});
+  assert.ok(compact.radius < 260, "eight commands fit a compact quarter");
+  assert.throws(() => layoutRadialRings({width: 800, height: 600, center: {x: 0, y: 0}, counts: [8], corner: "middle"}), /corner/);
+});
+
+test("long single words shrink slightly instead of being cut off", () => {
+  assert.deepEqual(fitRadialLabel("Extensions", 28), {lines: ["Extensions"], size: 8.1});
+  assert.deepEqual(fitRadialLabel("Exit focus", 28), {lines: ["Exit", "focus"], size: 10});
+  assert.deepEqual(fitRadialLabel("Copy link", 33), {lines: ["Copy link"], size: 10});
+  assert.equal(fitRadialLabel("Supercalifragilistic", 28).lines[0].endsWith("…"), true);
 });

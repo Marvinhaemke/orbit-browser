@@ -89,6 +89,7 @@ class SourceGuardTests(unittest.TestCase):
         manifest = (self.source / "browser/components/BrowserComponents.manifest").read_text(encoding="utf-8")
         self.assertEqual(manifest.count("Orbit.init"), 1)
         self.assertEqual(manifest.count("Orbit.uninit"), 1)
+        self.assertEqual(manifest.count("category browser-before-ui-startup moz-src:///browser/components/orbit/Orbit.sys.mjs Orbit.beforeUIStartup"), 1)
         self.assertIn('    "orbit",', (self.source / "browser/components/moz.build").read_text(encoding="utf-8"))
         self.assertIn("content/browser/orbit/orbit.html", (self.source / "browser/base/jar.mn").read_text(encoding="utf-8"))
         self.assertIn("content/browser/orbit/orbit.svg", (self.source / "browser/base/jar.mn").read_text(encoding="utf-8"))
@@ -145,6 +146,8 @@ class SourceGuardTests(unittest.TestCase):
         modified_prefs = prepare.transform("browser/branding/unofficial/pref/firefox-branding.js", self.fixture["browser/branding/unofficial/pref/firefox-branding.js"])
         self.assertIn('pref("app.update.url", "");', modified_prefs)
         self.assertIn('pref("browser.orbit.focus.default", true);', modified_prefs)
+        self.assertIn('pref("browser.startup.homepage", "chrome://browser/content/orbit/orbit.html");', modified_prefs)
+        self.assertIn('pref("browser.aboutwelcome.enabled", false);', modified_prefs)
 
 
 class PackageGuardTests(unittest.TestCase):

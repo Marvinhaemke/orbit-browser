@@ -11,7 +11,7 @@
 <body>
   <aside class="sidebar" aria-label="Canvas navigation">
     <div class="wordmark"><svg class="orbit-logo" aria-hidden="true" viewBox="0 0 48 48"><defs><linearGradient id="orbit-mark" x1="7" y1="8" x2="39" y2="40" gradientUnits="userSpaceOnUse"><stop stop-color="#a8f3e3"/><stop offset=".45" stop-color="#70ded3"/><stop offset="1" stop-color="#8c86f4"/></linearGradient></defs><circle cx="24" cy="24" r="13.5" fill="none" stroke="url(#orbit-mark)" stroke-width="6"/><ellipse cx="24" cy="24" rx="21" ry="8.5" transform="rotate(-32 24 24)" fill="none" stroke="url(#orbit-mark)" stroke-width="2.8"/><path d="M14.8 16.4a12 12 0 0 1 12.7-4" fill="none" stroke="#e1fff7" stroke-width="1.5" stroke-linecap="round"/><circle cx="41.5" cy="13.1" r="3.2" fill="#8c86f4"/><circle cx="40.8" cy="12.3" r="1" fill="#eceaff"/></svg> orbit <small>BROWSER</small></div>
-    <div class="workspace-title">My workspace<small>Every tab. A little more space.</small></div>
+    <div class="workspace-title">My workspace<small id="board-summary">Tabs and ideas, with room to connect.</small></div>
     <button class="nav active" id="fit-nav"><span class="ui-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="2"/><rect x="14" y="4" width="6" height="10" rx="2"/><rect x="4" y="14" width="7" height="6" rx="2"/><path d="M14 18h6"/></svg></span> My canvas <span id="tab-count" class="count">0</span></button>
     <button class="nav" id="import-tabs"><span class="ui-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 10a8 8 0 0 0-14-3L3 10m0-6v6h6M4 14a8 8 0 0 0 14 3l3-3m0 6v-6h-6"/></svg></span> Import open tabs</button>
     <div class="section-label">FRAMES <button id="sidebar-frame" title="Draw a frame (F)" aria-label="Draw a frame">＋</button></div>
@@ -19,17 +19,18 @@
     <div class="sidebar-bottom"><span class="sparkle" aria-hidden="true">✧</span><strong>Make room for ideas.</strong><p>Drag tabs into a frame.<br>Open the whole frame together.</p><button id="guide-button">Explore the gestures</button><div id="save-status" role="status">Loading workspace…</div></div>
   </aside>
   <main>
+    <!-- The canvas fills the page; this bar and the sidebar float over it. -->
     <header class="board-header">
-      <div class="board-top">
-        <div class="board-intro"><div class="breadcrumb" id="today">My workspace</div><h1><span id="greeting">Welcome back</span><span class="accent">.</span></h1><p id="board-summary">Tabs and ideas, with room to connect.</p></div>
-        <div class="header-actions"><button class="button" id="return-browser">← Return to page</button><button class="button" id="undo" title="Undo board change (Ctrl+Z)">↶ Undo</button><button class="button primary" id="add-tab">＋ Add tab</button></div>
-      </div>
-      <div class="launch-row">
+      <div class="board-bar">
+        <div class="board-intro"><div class="breadcrumb" id="today">My workspace</div><h1><span id="greeting">Welcome back</span><span class="accent">.</span></h1></div>
         <label class="launcher" id="launcher">
           <span class="ui-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10.5 17a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13ZM15.5 15.5 20 20"/></svg></span>
           <input id="address-launcher" type="text" autocomplete="off" spellcheck="false" placeholder="Search the web or enter an address" aria-label="Search the web or enter an address. Opens Orbit's address bar." aria-describedby="launcher-hint">
           <kbd id="launcher-hint" aria-label="Keyboard shortcut">Ctrl L</kbd>
         </label>
+        <div class="header-actions"><button class="button" id="return-browser" title="Return to page">← <span class="button-label">Return to page</span></button><button class="button" id="undo" title="Undo board change (Ctrl+Z)">↶ <span class="button-label">Undo</span></button><button class="button primary" id="add-tab" title="Add a website to the canvas">＋ <span class="button-label">Add tab</span></button></div>
+      </div>
+      <div class="launch-row">
         <nav id="shortcuts" class="shortcuts" aria-label="Frequently visited sites" hidden><ul id="shortcut-list"></ul><button type="button" id="shortcuts-toggle" class="shortcuts-toggle" title="Hide frequently visited sites">Hide</button></nav>
         <button type="button" id="shortcuts-show" class="shortcuts-show" hidden title="Show frequently visited sites">Show shortcuts</button>
       </div>
@@ -39,7 +40,6 @@
         <svg id="connections" aria-label="Connections and drawings"><defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8c86f4"/></marker></defs><g id="strokes"></g><g id="lines"></g></svg>
         <div id="frames"></div><div id="items"></div><div id="draft" hidden></div>
       </div>
-      <div class="canvas-label">YOUR IDEAS HAVE SPACE HERE</div>
       <div id="empty-state" hidden><span aria-hidden="true">▦</span><h2>A quiet canvas.</h2><p>Add websites or bring in your open tabs.<br>Group them into frames, then connect your ideas.</p><div class="empty-actions"><button class="button primary" id="empty-add">＋ Add a website</button><button class="button" id="empty-import">Import open tabs</button></div><p class="empty-keys"><kbd>N</kbd> note <kbd>F</kbd> frame <kbd>D</kbd> draw <span aria-hidden="true">·</span> right-click for more</p></div>
       <div class="toolbar" role="toolbar" aria-label="Canvas tools">
         <button data-tool="select" aria-pressed="true" title="Select and move (V)" aria-label="Select and move"><span class="ui-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m5 3 14 10-7 1-3 7zM12 14l4 6"/></svg></span><small>Select</small></button>

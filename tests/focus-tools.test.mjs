@@ -44,7 +44,7 @@ class View {
     this.root ||= new Node(this.win.document, `${this.options.idPrefix}-root`);
     this.panel ||= new Node(this.win.document, `${this.options.idPrefix}-menu`);
     this.root.append(this.panel);
-    this.geometry = {center: {x: 220, y: 220}, radius: 135};
+    this.geometry = {center: {x: 0, y: 0}, radius: 225, corner: model.corner};
     if (model.focus) this.panel.focus();
   }
   refresh(update) { Object.assign(this.model, update); }
@@ -112,15 +112,30 @@ const pointer = properties => ({isTrusted: true, type: "pointerup", button: 0, .
 const key = properties => ({isTrusted: true, type: "keydown", key: "Enter", ...properties});
 const act = (f, id, event = pointer()) => f.tools.activate({id}, event);
 
-test("hover opens without taking text focus, corridor retains slow mouse transit, and keyboard trigger focuses", () => {
+test("the corner quarter opens without taking text focus or adding a permanent button", () => {
   const f = fixture(); const input = new Node(f.doc, "page-input"); input.focus();
+  assert.equal(f.doc.getElementById("orbit-focus-tools-trigger"), null, "no constant corner button exists");
   f.tools.open(); assert.equal(f.doc.activeElement, input); assert.equal(f.tools.view.model.focus, false);
-  assert.equal(f.tools.ownsPointer(30, 30), true); assert.equal(f.tools.ownsPointer(155, 155), true);
+  assert.equal(f.tools.view.model.corner, "top-left");
+  assert.deepEqual(f.tools.view.model.centerItem, {id: "orbit-focus-new-tab", label: "New tab", icon: "＋", accesskey: "N"});
+  // The whole quarter disc (plus a margin) keeps the menu alive; beyond it does not.
+  assert.equal(f.tools.ownsPointer(10, 10), true); assert.equal(f.tools.ownsPointer(160, 160), true);
+  assert.equal(f.tools.ownsPointer(240, 0), true); assert.equal(f.tools.ownsPointer(200, 200), false);
   assert.equal(f.tools.ownsPointer(850, 350), false); assert.equal(f.tools.ownsPointer(NaN, 15), false);
   f.tools.close("conceal"); assert.equal(f.doc.activeElement, input);
-  const event = {isTrusted: true, key: "Enter", preventDefault() {}, stopPropagation() {}};
-  f.tools.trigger.emit("keydown", event); assert.equal(f.doc.activeElement, f.tools.view.panel);
-  assert.equal(f.tools.trigger.getAttribute("aria-expanded"), "true"); f.tools.destroy();
+  f.tools.open({focus: true}); assert.equal(f.doc.activeElement, f.tools.view.panel); f.tools.destroy();
+});
+test("the corner hub opens a new tab from a click or its N key, and Orbit commands moved into the quarter", () => {
+  const f = fixture(); const calls = []; f.tools.callbacks.onNewTab = () => calls.push("new-tab");
+  f.tools.callbacks.onCommands = () => calls.push("commands");
+  f.tools.open(); act(f, "orbit-focus-new-tab"); assert.deepEqual(calls, ["new-tab"]);
+  f.tools.open(); f.tools.activate({id: "orbit-focus-new-tab"}, key({key: "n"})); assert.deepEqual(calls, ["new-tab", "new-tab"]);
+  f.tools.open(); f.tools.activate({id: "orbit-focus-new-tab"}, key({key: "x"})); assert.equal(calls.length, 2, "another letter is not the hub's key");
+  const root = f.tools.items();
+  assert.ok(root.length <= 8, "the quarter keeps one ring of root commands");
+  assert.ok(root.some(item => item.id === "orbit-focus-commands") && root.some(item => item.id === "orbit-focus-canvas"));
+  assert.ok(root.find(item => item.id === "orbit-focus-settings").children.some(item => item.id === "orbit-focus-browser-menu"));
+  act(f, "orbit-focus-commands"); assert.deepEqual(calls.at(-1), "commands"); f.tools.destroy();
 });
 test("extension discovery excludes absent or private-forbidden widgets and reads current disabled state without executing", () => {
   const f = fixture(); const before = calls.length;
@@ -207,7 +222,7 @@ test("the original anchor survives panel transitions and closes safely on focus 
   f.win.emit("popupshowing", {target: first}); f.win.emit("popuphidden", {target: first}); f.win.emit("popupshowing", {target: second});
   f.flush(0); assert.equal(f.tools.anchor, anchor); assert.equal(f.tools.popups.has(second), true);
   f.tools.setEnabled(false); assert.equal(second.hiddenCalls, 1); assert.equal(f.tools.anchor, null);
-  assert.equal(f.tools.popups.size, 0); assert.equal(f.tools.trigger.hidden, true);
+  assert.equal(f.tools.popups.size, 0); assert.equal(f.tools.enabled, false);
   f.tools.open(); assert.equal(f.tools.visible, false); f.tools.destroy();
 });
 test("rapid reopen never accumulates view root listeners and destruction clears all window listeners and timers", () => {
@@ -215,7 +230,7 @@ test("rapid reopen never accumulates view root listeners and destruction clears 
   for (let i = 0; i < 30; i++) { f.tools.close("conceal"); f.tools.open(); }
   assert.equal(root.count(), count);
   f.tools.destroy(); assert.equal(f.win.count(), 0); assert.equal(f.win.gBrowser.tabContainer.count(), 0);
-  assert.equal(f.timers.size, 0); assert.equal(f.tools.trigger.isConnected, false); assert.equal(f.tools.view.destroyed, true);
+  assert.equal(f.timers.size, 0); assert.equal(f.tools.view.destroyed, true);
 });
 test("separate radial views have unique native IDs, gradients and focus contracts while defaults remain stable", async () => {
   const view = await readFile(new URL("../overlay/browser/components/orbit/OrbitRadialView.sys.mjs", import.meta.url), "utf8");

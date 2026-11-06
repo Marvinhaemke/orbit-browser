@@ -123,7 +123,7 @@
     const notes = board.items.length - cards;
     const parts = [];
     if (nativeTabs.length) parts.push(plural(nativeTabs.length, "open tab"));
-    if (cards) parts.push(`${plural(cards, "card")} on your canvas`);
+    if (cards) parts.push(plural(cards, "card"));
     if (board.frames.length) parts.push(plural(board.frames.length, "frame"));
     if (notes) parts.push(plural(notes, "note"));
     $("board-summary").textContent = parts.length ? parts.join(" · ") : "A quiet workspace. Add a site, a note, or a frame.";
@@ -253,29 +253,62 @@
     toast("Board change undone");
   }
 
+  // The canvas fills the page beneath floating menus. Camera coordinates are
+  // measured from the free area's top-left corner, beside the sidebar and
+  // below the top bar, so content opens clear of both and saved views keep
+  // the place they had when the canvas sat between those menus.
+  let origin = {x: 0, y: 0};
+
+  function measureOrigin() {
+    const view = viewport.getBoundingClientRect();
+    const sidebar = document.querySelector(".sidebar");
+    const side = sidebar?.getBoundingClientRect();
+    const bar = document.querySelector(".board-bar")?.getBoundingClientRect();
+    const gap = 16;
+    return {x: Math.max(0, (side?.width ? side.right : 0) - view.left + gap),
+      y: Math.max(0, (bar?.height ? bar.bottom : 0) - view.top + gap)};
+  }
+
+  function updateOrigin() {
+    const next = measureOrigin();
+    if (next.x === origin.x && next.y === origin.y) return;
+    origin = next;
+    applyCamera();
+  }
+
+  /** The visible free area, also below a shown shortcuts row and above the tools. */
+  function freeArea() {
+    const view = viewport.getBoundingClientRect();
+    const row = $("shortcuts").hidden ? null : $("shortcuts").getBoundingClientRect();
+    const top = Math.max(origin.y, row?.height ? row.bottom - view.top + 12 : 0);
+    return {left: origin.x, top, right: viewport.clientWidth - 16, bottom: viewport.clientHeight - 110};
+  }
+
   function point(event) {
     const rect = viewport.getBoundingClientRect();
-    return {x: clamp((event.clientX - rect.left - board.camera.x) / board.camera.zoom, -100000, 100000),
-      y: clamp((event.clientY - rect.top - board.camera.y) / board.camera.zoom, -100000, 100000)};
+    return {x: clamp((event.clientX - rect.left - origin.x - board.camera.x) / board.camera.zoom, -100000, 100000),
+      y: clamp((event.clientY - rect.top - origin.y - board.camera.y) / board.camera.zoom, -100000, 100000)};
   }
 
   function centerPoint() {
-    return {x: clamp((viewport.clientWidth / 2 - board.camera.x) / board.camera.zoom, -100000, 100000),
-      y: clamp((viewport.clientHeight / 2 - board.camera.y) / board.camera.zoom, -100000, 100000)};
+    const area = freeArea();
+    return {x: clamp(((area.left + area.right) / 2 - origin.x - board.camera.x) / board.camera.zoom, -100000, 100000),
+      y: clamp(((area.top + area.bottom) / 2 - origin.y - board.camera.y) / board.camera.zoom, -100000, 100000)};
   }
 
   function applyCamera() {
     const {x, y, zoom} = board.camera;
-    world.style.transform = `translate(${x}px, ${y}px) scale(${zoom})`;
+    world.style.transform = `translate(${origin.x + x}px, ${origin.y + y}px) scale(${zoom})`;
     viewport.style.backgroundSize = `${20 * zoom}px ${20 * zoom}px`;
-    viewport.style.backgroundPosition = `${x}px ${y}px`;
+    viewport.style.backgroundPosition = `${origin.x + x}px ${origin.y + y}px`;
     $("zoom-value").textContent = `${Math.round(zoom * 100)}%`;
   }
 
   function zoomAt(factor, clientX, clientY) {
     const rect = viewport.getBoundingClientRect();
-    const px = clientX === undefined ? viewport.clientWidth / 2 : clientX - rect.left;
-    const py = clientY === undefined ? viewport.clientHeight / 2 : clientY - rect.top;
+    const area = freeArea();
+    const px = (clientX === undefined ? (area.left + area.right) / 2 : clientX - rect.left) - origin.x;
+    const py = (clientY === undefined ? (area.top + area.bottom) / 2 : clientY - rect.top) - origin.y;
     const before = board.camera.zoom;
     const after = clamp(before * factor, .2, 2);
     board.camera.x = clamp(px - (px - board.camera.x) * after / before, -100000, 100000);
@@ -297,10 +330,11 @@
           maxX: Math.max(box.maxX, p.right), maxY: Math.max(box.maxY, p.bottom)}),
         {minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity});
       const {minX, minY, maxX, maxY} = extent;
-      const zoom = clamp(Math.min((viewport.clientWidth - 112) / Math.max(100, maxX - minX),
-        (viewport.clientHeight - 180) / Math.max(100, maxY - minY)), .2, 1.3);
-      board.camera = {x: (viewport.clientWidth - (maxX - minX) * zoom) / 2 - minX * zoom,
-        y: Math.max(50, (viewport.clientHeight - 85 - (maxY - minY) * zoom) / 2) - minY * zoom, zoom};
+      const area = freeArea();
+      const width = Math.max(100, area.right - area.left - 48), height = Math.max(100, area.bottom - area.top - 32);
+      const zoom = clamp(Math.min(width / Math.max(100, maxX - minX), height / Math.max(100, maxY - minY)), .2, 1.3);
+      board.camera = {x: area.left + (area.right - area.left - (maxX - minX) * zoom) / 2 - minX * zoom - origin.x,
+        y: area.top + Math.max(16, (area.bottom - area.top - (maxY - minY) * zoom) / 2) - minY * zoom - origin.y, zoom};
     }
     board.camera.x = clamp(board.camera.x, -100000, 100000);
     board.camera.y = clamp(board.camera.y, -100000, 100000);
@@ -964,6 +998,14 @@
   }
 
   async function start() {
+    origin = measureOrigin();
+    if (typeof ResizeObserver === "function") {
+      const observer = new ResizeObserver(() => updateOrigin());
+      for (const node of [viewport, document.querySelector(".sidebar"), document.querySelector(".board-bar")]) {
+        if (node) observer.observe(node);
+      }
+    }
+    window.addEventListener("resize", updateOrigin);
     if (!bridge) {
       $("save-status").textContent = "Native browser bridge unavailable";
       toast("Open a new Orbit tab or use the canvas button.");
