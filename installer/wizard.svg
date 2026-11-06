@@ -1,0 +1,47 @@
+<!-- This Source Code Form is subject to the terms of the Mozilla Public
+   - License, v. 2.0. If a copy of the MPL was not distributed with this
+   - file, You can obtain one at https://mozilla.org/MPL/2.0/. -->
+<!-- Source for installer/wizard.bmp, the side image of the welcome and finish
+     pages (twice NSIS's 164 x 314 size, for sharp high-DPI displays). -->
+<svg xmlns="http://www.w3.org/2000/svg" width="328" height="628" viewBox="0 0 164 314">
+  <defs>
+    <linearGradient id="space" x1="0" y1="0" x2="0.35" y2="1">
+      <stop stop-color="#273557"/>
+      <stop offset=".55" stop-color="#171e33"/>
+      <stop offset="1" stop-color="#10141f"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="82" cy="118" r="92" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#70ded3" stop-opacity=".22"/>
+      <stop offset="1" stop-color="#70ded3" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="orbit-mark" x1="7" y1="8" x2="39" y2="40" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#a8f3e3"/>
+      <stop offset=".45" stop-color="#70ded3"/>
+      <stop offset="1" stop-color="#8c86f4"/>
+    </linearGradient>
+  </defs>
+  <rect width="164" height="314" fill="url(#space)"/>
+  <rect width="164" height="314" fill="url(#glow)"/>
+  <g fill="none" stroke="#a8f3e3" stroke-opacity=".10">
+    <ellipse cx="82" cy="118" rx="118" ry="44" transform="rotate(-32 82 118)"/>
+    <ellipse cx="82" cy="118" rx="150" ry="60" transform="rotate(-32 82 118)" stroke="#8c86f4" stroke-opacity=".09"/>
+    <ellipse cx="82" cy="250" rx="140" ry="34" transform="rotate(-12 82 250)" stroke-opacity=".06"/>
+  </g>
+  <g fill="#eceaff">
+    <circle cx="22" cy="34" r=".8" opacity=".55"/>
+    <circle cx="138" cy="22" r="1" opacity=".5"/>
+    <circle cx="148" cy="92" r=".7" opacity=".45"/>
+    <circle cx="16" cy="170" r=".9" opacity=".4"/>
+    <circle cx="124" cy="206" r=".7" opacity=".4"/>
+    <circle cx="44" cy="262" r=".8" opacity=".35"/>
+    <circle cx="140" cy="286" r=".9" opacity=".3"/>
+    <circle cx="70" cy="40" r=".6" opacity=".4"/>
+  </g>
+  <g transform="translate(82 118) scale(2.15) translate(-24 -24)">
+    <circle cx="24" cy="24" r="13.5" fill="none" stroke="url(#orbit-mark)" stroke-width="6"/>
+    <ellipse cx="24" cy="24" rx="21" ry="8.5" transform="rotate(-32 24 24)" fill="none" stroke="url(#orbit-mark)" stroke-width="2.8"/>
+    <path d="M14.8 16.4a12 12 0 0 1 12.7-4" fill="none" stroke="#e1fff7" stroke-width="1.5" stroke-linecap="round"/>
+    <circle cx="41.5" cy="13.1" r="3.2" fill="#8c86f4"/>
+    <circle cx="40.8" cy="12.3" r="1" fill="#eceaff"/>
+  </g>
+</svg>

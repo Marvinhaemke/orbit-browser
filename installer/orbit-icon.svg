@@ -1,0 +1,27 @@
+<!-- This Source Code Form is subject to the terms of the Mozilla Public
+   - License, v. 2.0. If a copy of the MPL was not distributed with this
+   - file, You can obtain one at https://mozilla.org/MPL/2.0/. -->
+<!-- Source for installer/orbit.ico: the Orbit mark on a mineral-ink tile, so it
+     stays legible on light and dark Start menus. Regenerate with render-icon.mjs. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 48 48">
+  <defs>
+    <linearGradient id="orbit-tile" x1="4" y1="2" x2="44" y2="46" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#253252"/>
+      <stop offset="1" stop-color="#121726"/>
+    </linearGradient>
+    <linearGradient id="orbit-mark" x1="7" y1="8" x2="39" y2="40" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#a8f3e3"/>
+      <stop offset=".45" stop-color="#70ded3"/>
+      <stop offset="1" stop-color="#8c86f4"/>
+    </linearGradient>
+  </defs>
+  <rect x="1" y="1" width="46" height="46" rx="11" fill="url(#orbit-tile)"/>
+  <rect x="1.5" y="1.5" width="45" height="45" rx="10.5" fill="none" stroke="#ffffff" stroke-opacity=".08"/>
+  <g transform="translate(24 24) scale(.8) translate(-24 -24)">
+    <circle cx="24" cy="24" r="13.5" fill="none" stroke="url(#orbit-mark)" stroke-width="6"/>
+    <ellipse cx="24" cy="24" rx="21" ry="8.5" transform="rotate(-32 24 24)" fill="none" stroke="url(#orbit-mark)" stroke-width="3.2"/>
+    <path d="M14.8 16.4a12 12 0 0 1 12.7-4" fill="none" stroke="#e1fff7" stroke-width="1.5" stroke-linecap="round"/>
+    <circle cx="41.5" cy="13.1" r="3.4" fill="#8c86f4"/>
+    <circle cx="40.8" cy="12.3" r="1.1" fill="#eceaff"/>
+  </g>
+</svg>

@@ -306,6 +306,26 @@ try {
         Assert-True ($result.code -ne 0 -and $result.output -like '*Invalid native engine file list*') 'NSIS maintenance installer was accepted into the engine fingerprint.'
         Assert-Unchanged $fixture $before
     }
+    Run-Case 'installed-copy-keeps-uninstaller-outside-engine-fingerprint' {
+        param($fixture)
+        $state = Join-Path $fixture.install '.orbit-install'
+        Write-Utf8 (Join-Path $state 'Uninstall Orbit.exe') 'per-installation NSIS uninstaller'
+        Write-Utf8 (Join-Path $state 'orbit.ico') 'shortcut icon'
+        $uninstaller = Digest (Join-Path $state 'Uninstall Orbit.exe')
+        $manifest = New-Update $fixture
+        $before = Snapshot $fixture
+        $result = Invoke-Update $fixture
+        Assert-True ($result.code -eq 0) $result.output
+        Assert-Applied $fixture $manifest $before
+        Assert-True ((Digest (Join-Path $state 'Uninstall Orbit.exe')) -eq $uninstaller) 'The update changed the installed uninstaller.'
+        $manifest = New-Update $fixture 'installer-state'
+        $manifest.engine_files += Record $fixture.install '.orbit-install/Uninstall Orbit.exe'
+        Save-Manifest $fixture $manifest
+        $before = Snapshot $fixture
+        $result = Invoke-Update $fixture
+        Assert-True ($result.code -ne 0 -and $result.output -like '*invalid file path*') 'Installer state was accepted into the engine fingerprint.'
+        Assert-Unchanged $fixture $before
+    }
     Run-Case 'ZIP-traversal-cannot-touch-profile' {
         param($fixture)
         $null = New-Update $fixture 'new' @{'omni.ja' = 'new root UI archive'; '../profile/prefs.js' = 'malicious replacement'}

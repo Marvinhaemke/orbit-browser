@@ -4,15 +4,42 @@ Orbit is a Windows-first Firefox source fork exploring spatial browsing and new 
 
 This repository contains a small source overlay and guarded build scripts rather than a duplicate of Firefox’s entire history. The scripts fetch a pinned Firefox revision, apply the Orbit changes, and produce a native browser package.
 
-## Windows prototype
+## Download for Windows
 
-Download `Orbit-Windows-x64` from the latest successful [Windows build](https://github.com/Marvinhaemke/orbit-browser/actions/workflows/windows-prototype.yml).
+**[Download Orbit-Setup.exe](https://github.com/Marvinhaemke/orbit-browser/releases/download/windows-prototype/Orbit-Setup.exe)** (64-bit Windows 10 or 11), run it, and click through three short steps. Orbit installs for your Windows account only, so it does not need administrator rights. It adds **Orbit** and **Update Orbit** to the Start menu and, if you like, a desktop shortcut. Remove it from **Settings › Apps** like any other app; the uninstaller keeps your browsing data unless you choose to delete it.
 
-Runtime verification uses physical mouse input to test the toolbar, radial page actions, held tab switching, grouped tabs, and nested overflow rings. It captures native screenshots and checks link opening, editing, clipboard actions, cross-origin iframe targets, real Gecko rendering, SessionStore persistence, previews, and native split views. Windows artifacts are retained for 14 days; the workflow can build a fresh package afterward.
+This early build is not code-signed yet, so Windows SmartScreen may say it protected your PC. Choose **More info**, then **Run anyway**.
 
-The [Windows prototype workflow](https://github.com/Marvinhaemke/orbit-browser/actions/workflows/windows-prototype.yml) runs on pushes to `main`, pull requests, and manual requests. A downloadable package is published as a workflow artifact **only after the built browser passes the native runtime smoke test**.
+Prefer no installation? [Orbit-Windows-x64-portable.zip](https://github.com/Marvinhaemke/orbit-browser/releases/download/windows-prototype/Orbit-Windows-x64-portable.zip) is the same browser. Extract it to a writable folder and run `Launch-Orbit.cmd`. Both downloads, with SHA-256 checksums, are on the [Orbit for Windows release](https://github.com/Marvinhaemke/orbit-browser/releases/tag/windows-prototype).
 
-After a successful run, download its `Orbit-Windows-x64` artifact and extract it once to a writable folder. Run `Launch-Orbit.cmd` beside `orbit.exe` and `START-HERE.txt`. Windows may show the launcher as **Launch-Orbit** when file extensions are hidden. The launcher uses a dedicated Orbit profile. The native executable is `orbit.exe`, using Mozilla’s compiled Gecko engine with Orbit’s rebuilt browser interface.
+### Links for a website
+
+These addresses always serve the newest tested build, so a download page never needs editing:
+
+- Installer: `https://github.com/Marvinhaemke/orbit-browser/releases/latest/download/Orbit-Setup.exe`
+- Portable ZIP: `https://github.com/Marvinhaemke/orbit-browser/releases/latest/download/Orbit-Windows-x64-portable.zip`
+- Checksums: the same addresses with `.sha256` appended
+
+`installer/orbit-icon-256.png` is the Orbit app icon for a download page.
+
+### What the installer does
+
+- Installs to `%LOCALAPPDATA%\Programs\Orbit` (you can choose another empty folder). The profile, with bookmarks, history, settings, and canvas boards, lives in its `profile` folder.
+- Every shortcut names that profile. To pin Orbit to the taskbar, right-click **Orbit** in the Start menu and choose **Pin to taskbar**. Pinning the running window's taskbar button instead, or running `orbit.exe` directly, starts Orbit with a separate, empty profile, because the prebuilt engine executable still identifies itself as Firefox.
+- Running a newer `Orbit-Setup.exe` updates in place and keeps the profile. Setup refuses to run while Orbit is open.
+- Silent installs work for scripted setups: `Orbit-Setup.exe /S` (optionally `/D=C:\path\to\Orbit` as the last argument).
+
+To move your data from a portable folder, close Orbit and copy the contents of the portable `profile` folder into the installed `profile` folder before you first start the installed Orbit.
+
+### Build details
+
+The [Windows prototype workflow](https://github.com/Marvinhaemke/orbit-browser/actions/workflows/windows-prototype.yml) runs on pushes to `main`, pull requests, and manual requests. Runtime verification uses physical mouse input to test the toolbar, radial page actions, held tab switching, grouped tabs, and nested overflow rings. It captures native screenshots and checks link opening, editing, clipboard actions, cross-origin iframe targets, real Gecko rendering, SessionStore persistence, previews, and native split views.
+
+The installer is built from the same tested browser. CI installs it silently, compares every installed file with the tested package, checks the shortcuts and Apps registration, starts the installed browser with its profile, confirms Setup refuses while it runs, applies an interface update to the installed copy, reinstalls over it, runs the native smoke test on the installed browser, and uninstalls it. Only successful builds on `main` publish the release. Workflow runs also keep each build as the `Orbit-Windows-Installer` and `Orbit-Windows-x64` artifacts for 14 days.
+
+The installed or portable browser's executable is `orbit.exe`, Mozilla's compiled Gecko engine with Orbit's rebuilt browser interface. Each launcher uses a dedicated Orbit profile, never your Firefox profile.
+
+## Using Orbit
 
 Every new tab and every new window opens the **Orbit canvas**; it is also the default home page, which you can change in Settings. Ctrl+T and the native plus button retain address-bar focus so you can immediately type a website. The **Orbit canvas** toolbar button or **Alt + Shift + O** also opens the workspace over an existing page. Multiple canvas tabs share the same window’s workspace.
 
@@ -42,15 +69,13 @@ In focus mode, approach the **top middle** for the floating address bar; click i
 
 ## Test interface changes without downloading the whole browser
 
-For an existing Orbit installation, download [Orbit-Update-Setup.zip](https://github.com/Marvinhaemke/orbit-browser/releases/download/windows-prototype/Orbit-Update-Setup.zip) once and extract its two files beside `orbit.exe` and `Launch-Orbit.cmd`. New full browser packages already include these files.
-
-For the liquid-interface release, refresh these two updater files even if you installed an earlier setup ZIP. Replace the existing copies; subsequent interface changes can use **Update-Orbit.cmd** directly.
-
-Close Orbit, then double-click **Update-Orbit.cmd**. It downloads the latest tested interface package, applies it to the existing installation, and reopens the same portable profile. Tabs, bookmarks, notes, and canvas layouts stay in that profile. No Git checkout, GitHub sign-in, or build tools are needed.
+Installed copies and current portable downloads already contain the updater. Close Orbit, then open **Update Orbit** from the Start menu (in a portable folder, double-click **Update-Orbit.cmd**). It downloads the latest tested interface package, applies it to the existing installation, and reopens the same profile. Tabs, bookmarks, notes, and canvas layouts stay in that profile. No Git checkout, GitHub sign-in, or build tools are needed.
 
 The updater replaces the two packaged interface archives, verifies their hashes and the installed engine, keeps a backup, and clears Firefox’s compiled interface caches on restart. It refuses an incompatible engine or an update while Orbit is running. If Gecko changes, use a new full browser download instead.
 
-The [Windows prototype update channel](https://github.com/Marvinhaemke/orbit-browser/releases/tag/windows-prototype) is published only after the native browser passes runtime verification, the Windows updater passes integrity and rollback tests, and the updated installation passes the same native runtime checks. Only successful builds on `main` publish updates.
+Older portable folders without the current updater need [Orbit-Update-Setup.zip](https://github.com/Marvinhaemke/orbit-browser/releases/download/windows-prototype/Orbit-Update-Setup.zip) once: extract its two files beside `orbit.exe` and `Launch-Orbit.cmd`, replacing the existing copies.
+
+The [update channel](https://github.com/Marvinhaemke/orbit-browser/releases/tag/windows-prototype) is published only after the native browser passes runtime verification, the Windows updater passes integrity and rollback tests, and the updated installation passes the same native runtime checks. Only successful builds on `main` publish updates.
 
 Orbit’s default appearance combines moonstone and mineral-ink surfaces, lagoon cyan accents, an orbital O logo, and sculpted controls. The toolbar, tabs, address bar, canvas, and radial menus share this identity. Fluid transitions respect reduced motion, and explicitly selected Firefox themes keep their colors.
 
@@ -85,7 +110,10 @@ python -m pip install C:/orbit-firefox/testing/marionette/client
 python scripts/smoke_test.py --binary artifacts/Orbit/orbit.exe --report test-results/smoke.json
 python scripts/smoke_radial.py --binary artifacts/Orbit/orbit.exe --report test-results/radial/smoke.json
 python scripts/smoke_ux.py --binary artifacts/Orbit/orbit.exe --report test-results/ux/smoke.json
+python scripts/package_installer.py --package artifacts/Orbit --output artifacts/installer
 ```
+
+`package_installer.py` needs [NSIS 3](https://nsis.sourceforge.io/) (`makensis`) and writes `Orbit-Setup.exe` with its checksum. The installer script is `installer/orbit.nsi`; `node installer/render-art.mjs` regenerates its icon and artwork from the SVG sources.
 
 `prepare_source.py` verifies the exact upstream revision and the original files before changing them. It refuses unexpected source changes. Repeating preparation on a matching checkout is supported.
 
@@ -101,6 +129,6 @@ The runtime code uses Firefox’s platform-neutral browser APIs. The first packa
 - Workspace persistence follows Firefox’s session restoration. Private workspaces are not written into session state.
 - Removing a canvas card does not close its browser tab.
 - Automatic Firefox application updates are disabled so an upstream update cannot replace Orbit’s modified interface. Orbit’s prototype updater delivers tested interface changes; engine upgrades need a full package.
-- Orbit has its own canvas, toolbar, and About artwork. The artifact engine still carries upstream executable/taskbar artwork. Installer creation, code signing, full engine updates, and release builds are future work.
+- Orbit has its own canvas, toolbar, About, installer, and shortcut artwork. The artifact engine still carries upstream executable artwork, which Windows shows on the taskbar. Code signing, default-browser registration, and full engine updates are future work.
 
 See [architecture](docs/architecture.md) for the integration points and [the source pin](firefox-source.json) for upstream provenance. New Orbit source is licensed under [MPL 2.0](LICENSE); Firefox retains its upstream and third-party licenses.
