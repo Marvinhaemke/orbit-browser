@@ -67,7 +67,30 @@ globalThis.Services = {
     getBoolPref: (name, fallback) => prefValues.has(name) ? prefValues.get(name) : true,
     setBoolPref: (name, value) => prefValues.set(name, value),
   },
+  obs: {
+    topics: new Map(),
+    addObserver(observer, topic) {
+      if (!this.topics.has(topic)) this.topics.set(topic, new Set());
+      this.topics.get(topic).add(observer);
+    },
+    removeObserver(observer, topic) { this.topics.get(topic)?.delete(observer); },
+    notifyObservers(subject, topic) {
+      for (const observer of [...(this.topics.get(topic) || [])]) observer.observe(subject, topic);
+    },
+  },
+  focus: { activeWindow: null },
 };
+
+/** Dispatches an event whose target is a native node rather than the window,
+ * as Gecko reports focus moving into a <browser> to the chrome window. */
+class TargetedEvent extends Event {
+  constructor(type, target, init = {}) {
+    super(type);
+    this.nativeTarget = target;
+    Object.assign(this, init);
+  }
+  get target() { return this.nativeTarget; }
+}
 globalThis.Ci = { nsIReferrerInfo: { EMPTY: 0 }, nsIWebProgress: { NOTIFY_LOCATION: 16 } };
 globalThis.Cc = {
   "@mozilla.org/referrer-info;1": { createInstance: () => ({ init() {} }) },
@@ -637,10 +660,62 @@ test("address handoff gives typed text to Firefox's real address bar without nav
   assert.equal(win.gBrowser.selectedBrowser.currentURI.spec, "https://example.com/");
   assert.throws(() => bridge.focusAddress(42), /address text/);
   assert.throws(() => bridge.focusAddress("x".repeat(2049)), /address text/);
-  Orbit.openBoard(win);
-  win.OrbitChrome.focusAddress("from the toolbar canvas");
-  assert.equal(win.document.getElementById("orbit-canvas-overlay").hidden, true, "the overlay steps aside for the address bar");
   Orbit.uninit(win);
+});
+
+test("an overlay canvas stays in front of the address bar until the address bar navigates", () => {
+  const win = createWindow();
+  const other = createWindow();
+  Orbit.openBoard(win);
+  Orbit.openBoard(other);
+  const overlay = win.document.getElementById("orbit-canvas-overlay");
+  win.gURLBar.focused = false;
+  win.OrbitChrome.focusAddress("");
+  assert.equal(win.gURLBar.focused, true);
+  assert.equal(overlay.hidden, false, "clicking the canvas field must not reveal the page beneath, as Ctrl+L does not");
+  win.OrbitChrome.focusAddress("from the toolbar canvas");
+  assert.equal(win.gURLBar.searched, "from the toolbar canvas");
+  assert.equal(overlay.hidden, false);
+
+  // Escape while the address bar is in use belongs to Firefox's address bar.
+  const escape = () => {
+    const event = Object.assign(new Event("keydown", { cancelable: true }), {
+      key: "Escape", altKey: false, shiftKey: false, ctrlKey: false, metaKey: false, repeat: false,
+    });
+    win.dispatchEvent(event);
+    return event;
+  };
+  assert.equal(escape().defaultPrevented, false);
+  assert.equal(overlay.hidden, false, "Escape in the address bar keeps the canvas");
+
+  // Firefox returns focus to the hidden page; the visible canvas takes it.
+  const frame = win.document.getElementById("orbit-canvas-frame");
+  let canvasFocused = 0;
+  frame.focus = () => { canvasFocused += 1; };
+  win.gURLBar.focused = false;
+  win.dispatchEvent(new TargetedEvent("focus", win.gBrowser.selectedBrowser));
+  assert.equal(canvasFocused, 1, "keyboard focus never lands in the page beneath the overlay");
+
+  // Navigation from another window's address bar leaves this canvas alone.
+  win.gURLBar.focused = true;
+  other.gURLBar.focused = false;
+  Services.focus.activeWindow = win;
+  Services.obs.notifyObservers({ result: null }, "urlbar-user-start-navigation");
+  assert.equal(overlay.hidden, true, "the canvas steps aside once the address bar opens a page");
+  assert.equal(other.document.getElementById("orbit-canvas-overlay").hidden, false);
+  win.dispatchEvent(new TargetedEvent("focus", win.gBrowser.selectedBrowser));
+  assert.equal(canvasFocused, 1, "a hidden overlay never redirects focus");
+
+  // Without the address bar, Escape still closes an overlay canvas.
+  win.OrbitChrome.focusAddress("");
+  Orbit.openBoard(win);
+  win.gURLBar.focused = false;
+  assert.equal(escape().defaultPrevented, true);
+  assert.equal(overlay.hidden, true);
+  Services.focus.activeWindow = null;
+  Orbit.uninit(other);
+  Orbit.uninit(win);
+  assert.equal(Services.obs.topics.get("urlbar-user-start-navigation").size, 0, "closed windows stop observing navigation");
 });
 
 test("a shortcut replaces its own native canvas tab with a fresh null principal", () => {

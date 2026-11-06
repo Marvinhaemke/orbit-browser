@@ -243,6 +243,46 @@ def verify_canvas_launcher(driver, result):
     result["checks"].append("The canvas fills the whole page under floating side and top menus, its greeting renders, and its search field focuses Firefox's real address bar without navigating")
 
 
+def verify_overlay_launcher(driver, url, result):
+    """Over a page, the canvas search field behaves like Ctrl+L: the canvas
+    stays in front while the address bar is in use and steps aside once the
+    address bar opens a page."""
+    open_canvas(driver)
+    driver.set_context("chrome")
+    before = driver.execute_script('return {uri: gBrowser.selectedBrowser.currentURI.spec, tabs: gBrowser.tabs.length};')
+    point = driver.execute_script('''
+        const doc = document.getElementById("orbit-canvas-frame").contentDocument;
+        const box = doc.getElementById("address-launcher").getBoundingClientRect();
+        const frame = doc.defaultView;
+        return {x: Math.round(frame.mozInnerScreenX + box.x + box.width / 2 - window.mozInnerScreenX),
+            y: Math.round(frame.mozInnerScreenY + box.y + box.height / 2 - window.mozInnerScreenY)};
+    ''')
+    driver.actions.sequence("pointer", "orbit-overlay-mouse", {"pointerType": "mouse"}).pointer_move(
+        point["x"], point["y"], origin="viewport").click().perform()
+    wait_for(driver, "return gURLBar.focused;", "the overlay canvas field focuses Firefox's address bar")
+    state = driver.execute_script('''
+        return {overlay: !document.getElementById("orbit-canvas-overlay").hidden,
+            uri: gBrowser.selectedBrowser.currentURI.spec};
+    ''')
+    assert state["overlay"] and state["uri"] == before["uri"], f"The canvas field left the overlay canvas: {state}"
+    chord(driver, Keys.ESCAPE)
+    time.sleep(0.5)
+    assert driver.execute_script('return !document.getElementById("orbit-canvas-overlay").hidden;'), \
+        "Escape in the address bar closed the canvas instead of the address bar"
+    if not driver.execute_script("return gURLBar.focused;"):
+        chord(driver, Keys.CONTROL, "l")
+        wait_for(driver, "return gURLBar.focused;", "Ctrl+L focuses the address bar over the canvas")
+    target = url + "from-canvas-address"
+    driver.find_element(By.ID, "urlbar-input").send_keys(target, Keys.ENTER)
+    wait_for(driver, '''
+        return document.getElementById("orbit-canvas-overlay").hidden &&
+            gBrowser.selectedBrowser.currentURI.spec === arguments[0];
+    '''.replace("arguments[0]", json.dumps(target)), "the canvas steps aside for the page the address bar opens")
+    assert driver.execute_script("return gBrowser.tabs.length;") == before["tabs"], "The address bar opened an extra tab"
+    result["overlay_launcher"] = {"before": before["uri"], "after": target}
+    result["checks"].append("Over a page, the canvas search field and Escape keep the canvas in front of Firefox's address bar, which then opens its page in place of the canvas")
+
+
 def verify_native_newtab_ux(driver, fixture_handle, url, result, folder):
     """Exercise the browser's real new-tab commands and isolated workspaces."""
     checks = result["checks"]
@@ -563,6 +603,7 @@ def main() -> None:
         checks.append("Notes, connections, frames, and drawings persist through native SessionStore")
 
         verify_native_newtab_ux(driver, fixture_handle, url, result, report.parent)
+        verify_overlay_launcher(driver, url, result)
 
         open_canvas(driver)
         driver.execute_script('window.OrbitChrome.peek({url: arguments[0]});', script_args=[url + "peek"])
