@@ -698,9 +698,11 @@ jobs:
             $expected = (Get-Content "installer/$name.sha256" -Raw).Split(' ')[0]
             if ((Get-FileHash $download -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw "Public $name differs from the tested file" }
           }
-          # Websites can also link to the latest release.
-          $latest = Invoke-WebRequest "https://github.com/$env:GITHUB_REPOSITORY/releases/latest/download/Orbit-Setup.exe.sha256"
-          if ($latest.Content.Trim() -ne (Get-Content installer/Orbit-Setup.exe.sha256 -Raw).Trim()) { throw 'The latest-release link does not serve this installer' }
+          # Websites can also link to the latest release. GitHub serves .sha256
+          # assets as application/octet-stream, so compare the saved file.
+          $latest = Join-Path $env:RUNNER_TEMP 'latest-Orbit-Setup.exe.sha256'
+          Invoke-WebRequest "https://github.com/$env:GITHUB_REPOSITORY/releases/latest/download/Orbit-Setup.exe.sha256" -OutFile $latest
+          if ((Get-Content $latest -Raw).Trim() -ne (Get-Content installer/Orbit-Setup.exe.sha256 -Raw).Trim()) { throw 'The latest-release link does not serve this installer' }
 
       - name: Verify the actual public download and update flow
         shell: powershell
