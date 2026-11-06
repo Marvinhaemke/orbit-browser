@@ -98,7 +98,10 @@ def screenshot(driver, folder, name, result):
         result.setdefault("focus_states", {})[name] = focus_state(driver)
 
 
-def capture(driver, handle, kind, target="blank-target"):
+def capture(driver, handle, kind, target="blank-target", frame=None):
+    """Send to canvas from the page radial. With frames on the board, each
+    capture fans out into the canvas itself and each frame; frame=None takes
+    the canvas, otherwise the named frame."""
     page_menu(driver, handle, target)
     find_action(driver, "orbit-send-to-canvas")
     hover_node(driver, "orbit-send-to-canvas")
@@ -107,8 +110,19 @@ def capture(driver, handle, kind, target="blank-target"):
     ''', "hover fans out actual native canvas capture actions", [f"orbit-canvas-{kind}"])
     settle_radial(driver)
     assert_parent_fans(driver)
-    find_action(driver, f"orbit-canvas-{kind}")
-    activate(driver, f"orbit-canvas-{kind}")
+    action = f"orbit-canvas-{kind}"
+    if find_action(driver, action)["submenu"]:
+        action = f"orbit-canvas-{kind}-" + (f"frame-{frame}" if frame else "loose")
+        hover_node(driver, f"orbit-canvas-{kind}")
+        wait_for(driver, '''
+            return !!document.querySelector('[data-orbit-id="' + arguments[0] + '"]');
+        ''', "a capture fans out into the canvas and each of its frames", [action])
+        settle_radial(driver)
+        assert_parent_fans(driver)
+        find_action(driver, action)
+    else:
+        assert frame is None, f"Send to canvas offered no frame targets for {frame!r}"
+    activate(driver, action)
     assert_context_cleanup(driver)
 
 
@@ -1329,6 +1343,14 @@ def run_checks(driver, handle, url, result, folder):
     assert len(board(driver)["items"]) == count + 1
     assert driver.execute_script('return document.getElementById("orbit-capture-toast")?.textContent.includes("Already");')
     checks.append("Send to canvas captures the actual page and native tab identity, gives feedback, and avoids duplicate cards")
+
+    capture(driver, handle, "page", frame="ux-frame")
+    filed = board(driver)
+    moved = next(item for item in filed["items"] if item.get("url") == url)
+    assert moved["id"] == saved_page["id"] and moved.get("frameId") == "ux-frame", moved
+    assert len(filed["items"]) == count + 1, "Filing a captured page into a frame duplicated its card"
+    assert driver.execute_script('return document.getElementById("orbit-capture-toast")?.textContent.includes("Moved to “Orbital reading room”");')
+    checks.append("With frames on the board, Send to canvas fans out to the canvas and each frame; filing a captured page moves its card into the frame")
 
     capture(driver, handle, "link", "link-target")
     link = next(item for item in board(driver)["items"] if item.get("url") == url + "opened-top")
