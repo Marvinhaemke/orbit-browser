@@ -99,7 +99,8 @@ function Get-InstalledEnginePaths([string]$Root) {
         $directory = $queue.Dequeue()
         foreach ($item in Get-ChildItem -LiteralPath $directory -Force) {
             $relative = $item.FullName.Substring($prefix.Length).Replace([IO.Path]::DirectorySeparatorChar, [char]47)
-            if ($relative -match '^(profile|\.orbit-update-backup|\.orbit-update-stage-[^/]+)(/|$)') { continue }
+            # .orbit-install holds the Windows installer's uninstaller and icon.
+            if ($relative -match '^(profile|\.orbit-install|\.orbit-update-backup|\.orbit-update-stage-[^/]+)(/|$)') { continue }
             if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
                 throw 'Orbit updates do not follow symbolic links or junctions.'
             }

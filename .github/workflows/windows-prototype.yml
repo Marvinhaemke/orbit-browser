@@ -433,6 +433,146 @@ jobs:
         shell: pwsh
         run: python scripts/smoke_ux.py --binary artifacts/Orbit-Update-Check/orbit.exe --report test-results/updated/ux/smoke.json
 
+      - name: Build the Windows installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $makensis = (Get-Command makensis.exe -ErrorAction SilentlyContinue).Source
+          foreach ($candidate in "${env:ProgramFiles(x86)}\NSIS\makensis.exe", "$env:ProgramFiles\NSIS\makensis.exe") {
+            if (!$makensis -and (Test-Path $candidate)) { $makensis = $candidate }
+          }
+          if (!$makensis) {
+            choco install nsis --no-progress -y
+            if ($LASTEXITCODE -ne 0) { throw "NSIS installation failed: $LASTEXITCODE" }
+            $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          }
+          & $makensis /VERSION
+          python scripts/package_installer.py --package artifacts/Orbit --output artifacts/installer --makensis $makensis
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # The portable ZIP is the same tested browser under a stable download name.
+          $portable = @(Get-ChildItem artifacts -Filter 'Orbit-Windows-x64-*.zip')
+          if ($portable.Count -ne 1) { throw 'Expected exactly one portable Orbit ZIP' }
+          Copy-Item $portable[0].FullName artifacts/installer/Orbit-Windows-x64-portable.zip
+          $digest = (Get-FileHash artifacts/installer/Orbit-Windows-x64-portable.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content artifacts/installer/Orbit-Windows-x64-portable.zip.sha256 "$digest  Orbit-Windows-x64-portable.zip" -Encoding ascii
+
+      - name: Verify the installer installs, adopts its profile, updates, and refuses a running Orbit
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $setup = (Resolve-Path artifacts/installer/Orbit-Setup.exe).Path
+          $package = (Resolve-Path artifacts/Orbit).Path
+          $target = 'C:\orbit-installer-check'
+          $profileDir = "$target\profile"
+          $orbitData = Join-Path $env:APPDATA 'Mozilla\Orbit'
+          $programs = [Environment]::GetFolderPath('Programs')
+          function Stop-InstalledOrbit {
+            $running = @(Get-Process orbit -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$target\*" })
+            $running | Stop-Process -Force
+            $running | Wait-Process -Timeout 60 -ErrorAction SilentlyContinue
+          }
+          # Act like a new Windows account: no earlier Orbit profile list.
+          if (Test-Path $orbitData) { Remove-Item $orbitData -Recurse -Force }
+          $result = Start-Process $setup -ArgumentList '/S', "/D=$target" -Wait -PassThru
+          if ($result.ExitCode -ne 0) { throw "Silent install failed: $($result.ExitCode)" }
+
+          # The installation is the tested package, apart from the portable instructions.
+          foreach ($file in Get-ChildItem $package -Recurse -File) {
+            $relative = $file.FullName.Substring($package.Length + 1)
+            if ($relative -eq 'START-HERE.txt') { continue }
+            $installed = Join-Path $target $relative
+            if (!(Test-Path -LiteralPath $installed) -or (Get-FileHash -LiteralPath $installed).Hash -ne (Get-FileHash -LiteralPath $file.FullName).Hash) {
+              throw "Installed $relative differs from the tested package"
+            }
+          }
+          if (Test-Path "$target\START-HERE.txt") { throw 'The portable instructions were installed' }
+          foreach ($name in '.orbit-install\Uninstall Orbit.exe', '.orbit-install\orbit.ico', 'profile\compatibility.ini') {
+            if (!(Test-Path (Join-Path $target $name))) { throw "Installer did not create $name" }
+          }
+          $shell = New-Object -ComObject WScript.Shell
+          $shortcut = $shell.CreateShortcut((Join-Path $programs 'Orbit.lnk'))
+          if ($shortcut.TargetPath -ne "$target\orbit.exe" -or $shortcut.Arguments -ne "-profile `"$profileDir`"" -or $shortcut.WorkingDirectory -ne $target) {
+            throw "Start menu shortcut is wrong: $($shortcut.TargetPath) $($shortcut.Arguments) in $($shortcut.WorkingDirectory)"
+          }
+          if ($shell.CreateShortcut((Join-Path $programs 'Update Orbit.lnk')).TargetPath -ne "$target\Update-Orbit.cmd") { throw 'Update shortcut is wrong' }
+          $uninstall = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Orbit'
+          if ($uninstall.DisplayName -ne 'Orbit' -or $uninstall.InstallLocation -ne $target -or
+              $uninstall.QuietUninstallString -ne "`"$target\.orbit-install\Uninstall Orbit.exe`" /S") {
+            throw 'Apps and Features registration is wrong'
+          }
+
+          # Started without arguments, as a pinned taskbar button does, Orbit adopts the installed profile.
+          $orbit = Start-Process "$target\orbit.exe" -ArgumentList '-headless' -PassThru
+          $deadline = (Get-Date).AddSeconds(120)
+          $claimed = $false
+          while ((Get-Date) -lt $deadline -and !$claimed) {
+            Start-Sleep -Seconds 2
+            $profiles = if (Test-Path "$orbitData\profiles.ini") { [IO.File]::ReadAllText("$orbitData\profiles.ini") } else { '' }
+            $compat = if (Test-Path "$profileDir\compatibility.ini") { [IO.File]::ReadAllText("$profileDir\compatibility.ini") } else { '' }
+            $claimed = ($profiles -match ('(?m)^\[Install[0-9A-F]+\]\r?\n(?:[^\[\r\n][^\r\n]*\r?\n)*?Default=' + [regex]::Escape($profileDir) + '\r?$')) -and ($compat -match 'LastVersion=')
+            if ($orbit.HasExited -and !$claimed) { throw "Orbit exited early with $($orbit.ExitCode)" }
+          }
+          if (!$claimed) { throw "Orbit did not adopt the installed profile:`n$profiles`n$compat" }
+          if (Test-Path "$orbitData\Profiles") { throw 'Orbit created a second profile instead of using the installed one' }
+
+          # Setup must not replace a running browser.
+          $result = Start-Process $setup -ArgumentList '/S', "/D=$target" -Wait -PassThru
+          if ($result.ExitCode -eq 0) { throw 'Setup replaced files of a running Orbit' }
+          Stop-InstalledOrbit
+
+          # The installed updater accepts the installation, including the uninstaller.
+          Set-Content "$profileDir\installer-preservation.txt" 'Existing Orbit profile'
+          Set-Content "$target\omni.ja" 'Old interface archive'
+          Set-Content "$target\browser\omni.ja" 'Old browser interface archive'
+          & "$target\Update-Orbit.ps1" -ManifestPath artifacts/update/orbit-update.json -ArchivePath artifacts/update/Orbit-UI-Update.zip -NoLaunch
+          if ($LASTEXITCODE -ne 0) { throw 'The interface update failed in the installed copy' }
+          $manifest = Get-Content artifacts/update/orbit-update.json -Raw | ConvertFrom-Json
+          foreach ($file in $manifest.files) {
+            if ((Get-FileHash (Join-Path $target $file.path)).Hash -ne $file.sha256) { throw "Update did not install $($file.path)" }
+          }
+
+          # Running Setup again replaces the program and keeps the profile.
+          $result = Start-Process $setup -ArgumentList '/S' -Wait -PassThru
+          if ($result.ExitCode -ne 0) { throw "Reinstall failed: $($result.ExitCode)" }
+          if ((Get-Content "$profileDir\installer-preservation.txt" -Raw).Trim() -ne 'Existing Orbit profile') { throw 'Reinstall changed the profile' }
+          foreach ($stale in '.orbit-update-backup', 'orbit-ui-version.json') {
+            if (Test-Path (Join-Path $target $stale)) { throw "Reinstall kept stale $stale" }
+          }
+          if (!(Test-Path "$target\browser\.purgecaches")) { throw 'Reinstall will not invalidate compiled interface caches' }
+          if ((Get-FileHash "$target\omni.ja").Hash -ne (Get-FileHash "$package\omni.ja").Hash) { throw 'Reinstall did not restore the packaged interface' }
+
+      - name: Verify real native tabs and the canvas in the installed browser
+        shell: pwsh
+        run: python scripts/smoke_test.py --binary C:/orbit-installer-check/orbit.exe --report test-results/installed/smoke.json
+
+      - name: Verify the uninstaller removes Orbit and keeps the profile
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $target = 'C:\orbit-installer-check'
+          $programs = [Environment]::GetFolderPath('Programs')
+          # _? runs the uninstaller in place, so it remains as the only program file.
+          $result = Start-Process "$target\.orbit-install\Uninstall Orbit.exe" -ArgumentList '/S', "_?=$target\.orbit-install" -Wait -PassThru
+          if ($result.ExitCode -ne 0) { throw "Silent uninstall failed: $($result.ExitCode)" }
+          $left = @(Get-ChildItem $target -Force | ForEach-Object Name | Sort-Object)
+          if (($left -join ',') -ne '.orbit-install,profile') { throw "Uninstall left: $($left -join ', ')" }
+          if ((@(Get-ChildItem "$target\.orbit-install" -Force | ForEach-Object Name) -join ',') -ne 'Uninstall Orbit.exe') { throw 'Uninstall left installer state' }
+          if ((Get-Content "$target\profile\installer-preservation.txt" -Raw).Trim() -ne 'Existing Orbit profile') { throw 'Uninstall changed the kept profile' }
+          foreach ($shortcut in 'Orbit.lnk', 'Update Orbit.lnk') {
+            if (Test-Path (Join-Path $programs $shortcut)) { throw "Uninstall left the $shortcut shortcut" }
+          }
+          if (Test-Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Orbit') { throw 'Uninstall left the Apps and Features entry' }
+          if (Test-Path 'HKCU:\Software\Orbit') { throw 'Uninstall left the Orbit registry key' }
+          Remove-Item $target -Recurse -Force
+
+      - name: Upload tested Windows installer and portable download
+        uses: actions/upload-artifact@v4
+        with:
+          name: Orbit-Windows-Installer
+          path: artifacts/installer/
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Upload tested lightweight update and setup
         uses: actions/upload-artifact@v4
         with:
@@ -473,7 +613,7 @@ jobs:
           retention-days: 14
 
   publish-update:
-    name: Publish tested prototype interface update
+    name: Publish tested Windows installer and interface update
     needs: windows
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: windows-2022
@@ -486,46 +626,80 @@ jobs:
           name: Orbit-Windows-UI-Update
           path: update
 
+      - name: Download the verified installer and portable browser
+        uses: actions/download-artifact@v4
+        with:
+          name: Orbit-Windows-Installer
+          path: installer
+
       - name: Download the verified browser for the online updater check
         uses: actions/download-artifact@v4
         with:
           name: Orbit-Windows-x64
           path: online-browser
 
-      - name: Publish the Windows prototype update channel
+      - name: Publish the Windows release and update channel
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           ORBIT_COMMIT: ${{ github.sha }}
         run: |
-          cat > release-notes.md <<'EOF'
-          Close Orbit, then run Update-Orbit.cmd to test the latest verified interface.
+          download="https://github.com/$GH_REPO/releases/download/windows-prototype"
+          cat > release-notes.md <<EOF
+          ## Download Orbit for Windows
 
-          Quick right-click on a webpage opens Orbit's radial page actions. Open in new tab is in the center. Hover a submenu to reveal a fan beside its parent item. Hold the right button to explore open tabs, hover a tab, then release to switch; tab groups and More open further rings.
+          **[Orbit-Setup.exe]($download/Orbit-Setup.exe)**: download it, double-click it, and click through three short steps. Orbit installs for your Windows account only, so it does not need administrator rights, and it appears in the Start menu. Remove it from Settings › Apps like any other app; your browsing data is kept unless you choose to delete it.
 
-          The webpage and held-tab wheels now share the canvas menu's sculpted circular controls and soft moonstone/mineral-ink material. Submenus still fan out beside their parent.
+          Requires 64-bit Windows 10 or 11. This early build is not code-signed yet, so Windows SmartScreen may say it protected your PC: choose **More info**, then **Run anyway**.
 
-          Alt+Shift+F enters the refined focus mode. Approach the top middle for a floating address island; click it or press Ctrl+L to expand the original address bar and suggestions. Approach the top left for radial browser tools and native extension actions, or the top right for the rounded native window-controls island. Each area responds independently and stays visible while in use. Exit focus restores the full interface.
+          Prefer no installation? **[Orbit-Windows-x64-portable.zip]($download/Orbit-Windows-x64-portable.zip)** is the same browser. Extract it to a writable folder and run Launch-Orbit.cmd.
 
-          Ctrl+Shift+Space opens Orbit commands: search tabs and frames, open the canvas, or toggle focus mode.
+          ## Updating
 
-          Send to canvas in the page wheel collects a page, link, or selected text into the current window's workspace. Private captures stay in the private window.
+          Close Orbit, then open **Update Orbit** from the Start menu (in a portable folder, run Update-Orbit.cmd). It installs the newest tested interface and keeps your profile and the Gecko engine. Running a newer Orbit-Setup.exe also updates an installation in place. A new Gecko engine always needs a new Orbit-Setup.exe or portable download.
 
-          Every new tab opens the shared spatial canvas with Orbit's lagoon accents, orbital artwork, and fluid controls.
+          Portable folders with an older updater: download Orbit-Update-Setup.zip once and replace its two files beside orbit.exe.
 
-          Existing installations with the current updater can run Update-Orbit.cmd directly; your profile and Gecko engine are kept. If you still have an older updater, download Orbit-Update-Setup.zip and replace its two files beside orbit.exe once.
+          ## What Orbit does
 
-          Full browser downloads and native test results are available from the Windows prototype workflow. A new Gecko engine requires a complete browser download.
+          - Every new tab and window opens the Orbit canvas, a full-page spatial workspace with floating menus. Arrange real tabs as cards, group them in frames, and add notes, connections, and drawings.
+          - Focus mode is the default. Approach the top middle for the address island, the top-left corner for a quarter-circle tools menu whose corner opens a new tab, or the top right for the window controls. Alt+Shift+F toggles it.
+          - A quick right-click on a webpage opens radial page actions with Open in new tab in the center. Hold the right button to switch tabs, including tab groups.
+          - Ctrl+Shift+Space opens Orbit commands to search tabs and frames, open the canvas, or toggle focus mode.
+          - Send to canvas in the page wheel collects a page, link, or selected text. Private captures stay in the private window.
+
+          SHA-256 checksums are in the .sha256 files below.
           EOF
           printf '\nVerified source commit: %s\n' "$ORBIT_COMMIT" >> release-notes.md
           if ! gh release view windows-prototype >/dev/null 2>&1; then
-            gh release create windows-prototype --target "$ORBIT_COMMIT" --title 'Orbit Windows prototype updates' --prerelease --notes-file release-notes.md
+            gh release create windows-prototype --target "$ORBIT_COMMIT" --title 'Orbit for Windows' --latest --notes-file release-notes.md
           fi
+          # The release's source archives should match the published browser.
+          gh api -X PATCH "repos/$GH_REPO/git/refs/tags/windows-prototype" -f sha="$ORBIT_COMMIT" -F force=true >/dev/null ||
+            echo "::warning::Could not move the windows-prototype tag to $ORBIT_COMMIT"
+          gh release upload windows-prototype installer/Orbit-Setup.exe installer/Orbit-Setup.exe.sha256 \
+            installer/Orbit-Windows-x64-portable.zip installer/Orbit-Windows-x64-portable.zip.sha256 --clobber
           # Publish the manifest last. Mixed assets during publication fail hash checks.
           gh release upload windows-prototype update/Orbit-UI-Update.zip update/Orbit-Update-Setup.zip --clobber
           gh release upload windows-prototype update/orbit-update.json --clobber
-          gh release edit windows-prototype --title 'Orbit Windows prototype updates' --prerelease --notes-file release-notes.md
+          gh release edit windows-prototype --title 'Orbit for Windows' --prerelease=false --latest --notes-file release-notes.md
+
+      - name: Verify the public installer and portable downloads
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ProgressPreference = 'SilentlyContinue'
+          $base = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/windows-prototype"
+          foreach ($name in 'Orbit-Setup.exe', 'Orbit-Windows-x64-portable.zip') {
+            $download = Join-Path $env:RUNNER_TEMP $name
+            Invoke-WebRequest "$base/$name" -OutFile $download
+            $expected = (Get-Content "installer/$name.sha256" -Raw).Split(' ')[0]
+            if ((Get-FileHash $download -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw "Public $name differs from the tested file" }
+          }
+          # Websites can also link to the latest release.
+          $latest = Invoke-WebRequest "https://github.com/$env:GITHUB_REPOSITORY/releases/latest/download/Orbit-Setup.exe.sha256"
+          if ($latest.Content.Trim() -ne (Get-Content installer/Orbit-Setup.exe.sha256 -Raw).Trim()) { throw 'The latest-release link does not serve this installer' }
 
       - name: Verify the actual public download and update flow
         shell: powershell

@@ -115,6 +115,8 @@ def main() -> None:
         shutil.copy2(ROOT / "scripts" / "windows" / name, package / name)
     (package / "START-HERE.txt").write_text(
         "Orbit — native Firefox frontend fork\n\n"
+        "To install Orbit with Start menu shortcuts instead, use Orbit-Setup.exe:\n"
+        "https://github.com/Marvinhaemke/orbit-browser/releases/download/windows-prototype/Orbit-Setup.exe\n\n"
         "Extract this complete folder to a writable location. Run Launch-Orbit.cmd.\n"
         "Windows may display the launcher as Launch-Orbit without the extension.\n"
         "Launch-Orbit.cmd, START-HERE.txt, and orbit.exe belong in the same folder.\n"
