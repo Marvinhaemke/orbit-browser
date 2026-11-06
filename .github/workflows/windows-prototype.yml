@@ -456,7 +456,7 @@ jobs:
           $digest = (Get-FileHash artifacts/installer/Orbit-Windows-x64-portable.zip -Algorithm SHA256).Hash.ToLowerInvariant()
           Set-Content artifacts/installer/Orbit-Windows-x64-portable.zip.sha256 "$digest  Orbit-Windows-x64-portable.zip" -Encoding ascii
 
-      - name: Verify the installer installs, adopts its profile, updates, and refuses a running Orbit
+      - name: Verify the installer installs, updates, reinstalls, and refuses a running Orbit
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
@@ -464,15 +464,12 @@ jobs:
           $package = (Resolve-Path artifacts/Orbit).Path
           $target = 'C:\orbit-installer-check'
           $profileDir = "$target\profile"
-          $orbitData = Join-Path $env:APPDATA 'Mozilla\Orbit'
           $programs = [Environment]::GetFolderPath('Programs')
           function Stop-InstalledOrbit {
             $running = @(Get-Process orbit -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$target\*" })
             $running | Stop-Process -Force
             $running | Wait-Process -Timeout 60 -ErrorAction SilentlyContinue
           }
-          # Act like a new Windows account: no earlier Orbit profile list.
-          if (Test-Path $orbitData) { Remove-Item $orbitData -Recurse -Force }
           $result = Start-Process $setup -ArgumentList '/S', "/D=$target" -Wait -PassThru
           if ($result.ExitCode -ne 0) { throw "Silent install failed: $($result.ExitCode)" }
 
@@ -486,7 +483,7 @@ jobs:
             }
           }
           if (Test-Path "$target\START-HERE.txt") { throw 'The portable instructions were installed' }
-          foreach ($name in '.orbit-install\Uninstall Orbit.exe', '.orbit-install\orbit.ico', 'profile\compatibility.ini') {
+          foreach ($name in '.orbit-install\Uninstall Orbit.exe', '.orbit-install\orbit.ico', 'profile', 'browser\.purgecaches') {
             if (!(Test-Path (Join-Path $target $name))) { throw "Installer did not create $name" }
           }
           $shell = New-Object -ComObject WScript.Shell
@@ -501,52 +498,21 @@ jobs:
             throw 'Apps and Features registration is wrong'
           }
 
-          function Write-OrbitDiagnostics([datetime]$Since) {
-            Write-Host "--- Orbit processes"
-            Get-CimInstance Win32_Process -Filter "Name='orbit.exe'" | ForEach-Object { Write-Host "$($_.ProcessId) (parent $($_.ParentProcessId)): $($_.CommandLine)" }
-            Write-Host "--- Profile files written since $($Since.ToString('HH:mm:ss'))"
-            foreach ($root in $env:APPDATA, $env:LOCALAPPDATA, $env:TEMP, $target) {
-              Get-ChildItem $root -Recurse -Depth 6 -Force -File -ErrorAction SilentlyContinue |
-                Where-Object { $_.LastWriteTime -ge $Since -and $_.Name -in 'profiles.ini', 'installs.ini', 'compatibility.ini', 'parent.lock', 'times.json', 'prefs.js' } |
-                ForEach-Object { Write-Host "$($_.LastWriteTime.ToString('HH:mm:ss')) $($_.FullName)" }
-            }
-          }
-          function Wait-ProfileStart([datetime]$Deadline, $Process, [switch]$RequireClaim) {
-            while ((Get-Date) -lt $Deadline) {
-              Start-Sleep -Seconds 2
-              $profiles = if (Test-Path "$orbitData\profiles.ini") { [IO.File]::ReadAllText("$orbitData\profiles.ini") } else { '' }
-              $compat = if (Test-Path "$profileDir\compatibility.ini") { [IO.File]::ReadAllText("$profileDir\compatibility.ini") } else { '' }
-              $claim = $profiles -match ('(?m)^\[Install[0-9A-F]+\]\r?\n(?:[^\[\r\n][^\r\n]*\r?\n)*?Default=' + [regex]::Escape($profileDir) + '\r?$')
-              if (($compat -match 'LastVersion=') -and ($claim -or !$RequireClaim)) { return $true }
-              if ($Process.HasExited) { Write-Host "Orbit exited with $($Process.ExitCode)"; break }
-            }
-            Write-Host "--- profiles.ini`n$profiles`n--- compatibility.ini`n$compat"
-            return $false
-          }
-          Write-Host "--- application.ini"; Get-Content "$target\application.ini" | Write-Host
-          Write-OrbitDiagnostics (Get-Date).AddMinutes(-1)
-
-          # Started without arguments, as a pinned taskbar button does, Orbit adopts the installed profile.
+          # The installed browser starts with its own profile, as the shortcuts start it.
           $launched = Get-Date
-          $orbit = Start-Process "$target\orbit.exe" -ArgumentList '-headless' -PassThru
-          if (!(Wait-ProfileStart $launched.AddSeconds(120) $orbit -RequireClaim)) {
-            Write-OrbitDiagnostics $launched
-            Stop-InstalledOrbit
-            # Control: does the same installation start with its profile named explicitly?
-            $controlStart = Get-Date
-            $control = Start-Process "$target\orbit.exe" -ArgumentList "-headless -profile `"$profileDir`"" -PassThru
-            $started = Wait-ProfileStart $controlStart.AddSeconds(90) $control
-            Write-Host "Control start with -profile wrote its compatibility.ini: $started"
-            Write-OrbitDiagnostics $controlStart
-            Stop-InstalledOrbit
-            throw 'Orbit did not adopt the installed profile when started without arguments'
+          $orbit = Start-Process "$target\orbit.exe" -ArgumentList "-headless -profile `"$profileDir`"" -PassThru
+          $started = $false
+          while (!$started -and (Get-Date) -lt $launched.AddSeconds(120)) {
+            Start-Sleep -Seconds 2
+            $started = (Test-Path "$profileDir\compatibility.ini") -and ([IO.File]::ReadAllText("$profileDir\compatibility.ini") -match 'LastVersion=')
+            if (!$started -and $orbit.HasExited) { throw "The installed Orbit exited with $($orbit.ExitCode)" }
           }
-          Write-Host "Orbit adopted the installed profile after $([int]((Get-Date) - $launched).TotalSeconds) seconds"
-          if (Test-Path "$orbitData\Profiles") { throw 'Orbit created a second profile instead of using the installed one' }
+          if (!$started) { throw 'The installed Orbit did not start with its profile' }
 
           # Setup must not replace a running browser.
           $result = Start-Process $setup -ArgumentList '/S', "/D=$target" -Wait -PassThru
           if ($result.ExitCode -eq 0) { throw 'Setup replaced files of a running Orbit' }
+          if ((Get-FileHash "$target\xul.dll").Hash -ne (Get-FileHash "$package\xul.dll").Hash) { throw 'Setup changed the running installation' }
           Stop-InstalledOrbit
 
           # The installed updater accepts the installation, including the uninstaller.
@@ -679,6 +645,8 @@ jobs:
           ## Download Orbit for Windows
 
           **[Orbit-Setup.exe]($download/Orbit-Setup.exe)**: download it, double-click it, and click through three short steps. Orbit installs for your Windows account only, so it does not need administrator rights, and it appears in the Start menu. Remove it from Settings › Apps like any other app; your browsing data is kept unless you choose to delete it.
+
+          To pin Orbit to the taskbar, right-click **Orbit** in the Start menu and choose **Pin to taskbar**.
 
           Requires 64-bit Windows 10 or 11. This early build is not code-signed yet, so Windows SmartScreen may say it protected your PC: choose **More info**, then **Run anyway**.
 

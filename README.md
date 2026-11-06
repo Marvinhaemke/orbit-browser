@@ -25,7 +25,7 @@ These addresses always serve the newest tested build, so a download page never n
 ### What the installer does
 
 - Installs to `%LOCALAPPDATA%\Programs\Orbit` (you can choose another empty folder). The profile, with bookmarks, history, settings, and canvas boards, lives in its `profile` folder.
-- Registers that profile as Orbit's default, so a pinned taskbar button or a jump-list entry opens it too. If Orbit already has its own profiles on the computer, Setup leaves that list unchanged.
+- Every shortcut names that profile. To pin Orbit to the taskbar, right-click **Orbit** in the Start menu and choose **Pin to taskbar**. Pinning the running window's taskbar button instead, or running `orbit.exe` directly, starts Orbit with a separate, empty profile, because the prebuilt engine executable still identifies itself as Firefox.
 - Running a newer `Orbit-Setup.exe` updates in place and keeps the profile. Setup refuses to run while Orbit is open.
 - Silent installs work for scripted setups: `Orbit-Setup.exe /S` (optionally `/D=C:\path\to\Orbit` as the last argument).
 
@@ -35,7 +35,7 @@ To move your data from a portable folder, close Orbit and copy the contents of t
 
 The [Windows prototype workflow](https://github.com/Marvinhaemke/orbit-browser/actions/workflows/windows-prototype.yml) runs on pushes to `main`, pull requests, and manual requests. Runtime verification uses physical mouse input to test the toolbar, radial page actions, held tab switching, grouped tabs, and nested overflow rings. It captures native screenshots and checks link opening, editing, clipboard actions, cross-origin iframe targets, real Gecko rendering, SessionStore persistence, previews, and native split views.
 
-The installer is built from the same tested browser. CI installs it silently, compares every installed file with the tested package, checks the shortcuts and Apps registration, starts Orbit without arguments to confirm it adopts the installed profile, applies an interface update to the installed copy, reinstalls over it, runs the native smoke test on the installed browser, and uninstalls it. Only successful builds on `main` publish the release. Workflow runs also keep each build as the `Orbit-Windows-Installer` and `Orbit-Windows-x64` artifacts for 14 days.
+The installer is built from the same tested browser. CI installs it silently, compares every installed file with the tested package, checks the shortcuts and Apps registration, starts the installed browser with its profile, confirms Setup refuses while it runs, applies an interface update to the installed copy, reinstalls over it, runs the native smoke test on the installed browser, and uninstalls it. Only successful builds on `main` publish the release. Workflow runs also keep each build as the `Orbit-Windows-Installer` and `Orbit-Windows-x64` artifacts for 14 days.
 
 The installed or portable browser's executable is `orbit.exe`, Mozilla's compiled Gecko engine with Orbit's rebuilt browser interface. Each launcher uses a dedicated Orbit profile, never your Firefox profile.
 

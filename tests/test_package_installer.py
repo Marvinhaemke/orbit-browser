@@ -98,17 +98,12 @@ class InstallerScriptTests(unittest.TestCase):
             self.assertIn('"$INSTDIR\\orbit.exe" \'-profile "$INSTDIR\\profile"\'', line)
         self.assertIn('Exec \'"$INSTDIR\\orbit.exe" -profile "$INSTDIR\\profile"\'', SCRIPT)
 
-    def test_profile_list_is_written_as_utf8_once(self):
-        register = SCRIPT.split("Function RegisterProfile", 1)[1].split("FunctionEnd", 1)[0]
-        self.assertIn('${If} ${FileExists} "${ORBIT_PROFILE_ROOT}\\profiles.ini"', register)
-        # A list that already names a profile is left alone.
-        self.assertIn('ReadINIStr $1 "${ORBIT_PROFILE_ROOT}\\profiles.ini" "Profile0" "Path"', register)
-        self.assertLess(register.index('${If} $1 != ""'), register.index('FileOpen $0 "${ORBIT_PROFILE_ROOT}\\profiles.ini"'))
-        self.assertIn("Call WriteUtf8", register)
-        self.assertLess(register.index('profiles.ini" a'), register.index("FileSeek $0 0 END"))
-        self.assertIn("Path=$INSTDIR\\profile", SCRIPT.split("!define ORBIT_PROFILE_ENTRY", 1)[1].splitlines()[0])
-        self.assertIn('!define ORBIT_PROFILE_ROOT "$APPDATA\\Mozilla\\Orbit"', SCRIPT)
-        self.assertIn("kernel32::WideCharToMultiByte(i 65001", SCRIPT)
+    def test_never_edits_a_gecko_profile_list(self):
+        # orbit.exe is Mozilla's prebuilt binary, so Gecko's profile list for
+        # starts without -profile is the person's Firefox list.
+        self.assertNotIn("profiles.ini", SCRIPT)
+        self.assertNotIn("installs.ini", SCRIPT)
+        self.assertNotIn("$APPDATA", SCRIPT)
 
 
 class InstallerBuildTests(unittest.TestCase):

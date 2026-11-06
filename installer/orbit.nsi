@@ -35,9 +35,6 @@ CRCCheck on
 !define ORBIT_UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\Orbit"
 !define ORBIT_STATE_DIR ".orbit-install"
 !define ORBIT_UNINSTALLER "Uninstall Orbit.exe"
-; application.ini has Vendor=Mozilla and Name=Orbit, so Gecko keeps Orbit's
-; profile list here, separate from Firefox's.
-!define ORBIT_PROFILE_ROOT "$APPDATA\Mozilla\Orbit"
 
 Name "Orbit"
 Caption "Orbit Setup"
@@ -199,77 +196,6 @@ Function ValidateInstallDirectory
   ${EndIf}
 FunctionEnd
 
-; Writes text to an open file handle as UTF-8, which Gecko expects for paths
-; in profiles.ini. NSIS's own FileWrite would use the ANSI code page.
-Function WriteUtf8
-  Exch $0 ; text
-  Exch
-  Exch $1 ; file handle
-  Push $2
-  Push $3
-  Push $4
-  System::Call 'kernel32::WideCharToMultiByte(i 65001, i 0, w r0, i -1, p 0, i 0, p 0, p 0) i .r2'
-  ${If} $2 > 1
-    System::Alloc $2
-    Pop $3
-    System::Call 'kernel32::WideCharToMultiByte(i 65001, i 0, w r0, i -1, p r3, i r2, p 0, p 0)'
-    IntOp $2 $2 - 1
-    System::Call 'kernel32::WriteFile(p r1, p r3, i r2, *i .r4, p 0) i .r2'
-    System::Free $3
-  ${EndIf}
-  Pop $4
-  Pop $3
-  Pop $2
-  Pop $1
-  Pop $0
-FunctionEnd
-
-; Makes Orbit open the installed profile even when Windows starts orbit.exe
-; without arguments, as a pinned taskbar button or a jump list task does.
-; Gecko adopts the default profile of an unclaimed profiles.ini on the first
-; such start, once the profile has a compatibility.ini. A profile list that
-; already names profiles belongs to earlier Orbit starts and is never changed.
-!define ORBIT_PROFILE_ENTRY "[Profile0]$\r$\nName=Orbit$\r$\nIsRelative=0$\r$\nPath=$INSTDIR\profile$\r$\nDefault=1$\r$\n"
-Function RegisterProfile
-  ${IfNot} ${FileExists} "$INSTDIR\profile\compatibility.ini"
-    ; No LastVersion: Gecko treats the profile as new and rewrites the file.
-    FileOpen $0 "$INSTDIR\profile\compatibility.ini" w
-    FileWrite $0 "[Compatibility]$\r$\n"
-    FileClose $0
-  ${EndIf}
-  ${If} ${FileExists} "${ORBIT_PROFILE_ROOT}\profiles.ini"
-    ReadINIStr $1 "${ORBIT_PROFILE_ROOT}\profiles.ini" "Profile0" "Path"
-    ${If} $1 != ""
-      DetailPrint "Keeping the existing Orbit profile list."
-      Return
-    ${EndIf}
-    ; Gecko's background tasks can create the list before any profile exists.
-    ; Keep their entries and add the installed profile after them.
-    ClearErrors
-    FileOpen $0 "${ORBIT_PROFILE_ROOT}\profiles.ini" a
-    ${If} ${Errors}
-      DetailPrint "Could not update the Orbit profile list."
-      Return
-    ${EndIf}
-    ; FileOpen's append mode starts at the beginning of the file.
-    FileSeek $0 0 END
-    Push $0
-    Push "$\r$\n${ORBIT_PROFILE_ENTRY}"
-  ${Else}
-    CreateDirectory "${ORBIT_PROFILE_ROOT}"
-    ClearErrors
-    FileOpen $0 "${ORBIT_PROFILE_ROOT}\profiles.ini" w
-    ${If} ${Errors}
-      DetailPrint "Could not write the Orbit profile list."
-      Return
-    ${EndIf}
-    Push $0
-    Push "[General]$\r$\nStartWithLastProfile=1$\r$\nVersion=2$\r$\n$\r$\n${ORBIT_PROFILE_ENTRY}"
-  ${EndIf}
-  Call WriteUtf8
-  FileClose $0
-FunctionEnd
-
 Section "Orbit" SecOrbit
   SectionIn RO
   SetShellVarContext current
@@ -294,15 +220,16 @@ Section "Orbit" SecOrbit
   FileOpen $0 "$INSTDIR\browser\.purgecaches" w
   FileClose $0
   CreateDirectory "$INSTDIR\profile"
-  Call RegisterProfile
 
   SetOutPath "$INSTDIR\${ORBIT_STATE_DIR}"
   File "orbit.ico"
   WriteUninstaller "$INSTDIR\${ORBIT_STATE_DIR}\${ORBIT_UNINSTALLER}"
   SetFileAttributes "$INSTDIR\${ORBIT_STATE_DIR}" HIDDEN
 
-  ; Shortcuts start in the installation folder and name the profile, so they
-  ; open the installed profile even beside other Orbit copies.
+  ; orbit.exe is Mozilla's prebuilt engine binary, so without -profile Gecko
+  ; would pick a profile from Firefox's own profile list. Every way Setup
+  ; starts Orbit names the installed profile instead, and Setup never edits
+  ; any Gecko profile list.
   SetOutPath "$INSTDIR"
   CreateShortcut "$SMPROGRAMS\Orbit.lnk" "$INSTDIR\orbit.exe" '-profile "$INSTDIR\profile"' "$INSTDIR\${ORBIT_STATE_DIR}\orbit.ico" 0 SW_SHOWNORMAL "" "Browse the web with Orbit"
   CreateShortcut "$SMPROGRAMS\Update Orbit.lnk" "$INSTDIR\Update-Orbit.cmd" "" "$INSTDIR\${ORBIT_STATE_DIR}\orbit.ico" 0 SW_SHOWNORMAL "" "Install the newest tested Orbit interface"
