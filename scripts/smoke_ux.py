@@ -1038,9 +1038,46 @@ def force_default_theme(driver, dark):
     ''', "default native Orbit colors finish painting", [dark, "#151b2c" if dark else "#e9eef5"])
 
 
+def verify_default_focus_window(driver, result):
+    """With Orbit's shipped default, a new ordinary window opens in focus mode."""
+    driver.set_context("chrome")
+    assert not driver.execute_script('return document.documentElement.hasAttribute("data-orbit-focus");'), \
+        "The opted-out main test window must start with the full toolbar"
+    state = driver.execute_async_script('''
+        const complete = arguments[arguments.length - 1];
+        Services.prefs.setBoolPref("browser.orbit.focus.default", true);
+        const opened = OpenBrowserWindow();
+        const observer = subject => {
+            if (subject !== opened) return;
+            Services.obs.removeObserver(observer, "browser-delayed-startup-finished");
+            const root = opened.document.documentElement;
+            const state = {focus: root.getAttribute("data-orbit-focus"),
+                chip: opened.document.getElementById("orbit-focus-chip")?.hidden === false,
+                trigger: opened.document.getElementById("orbit-focus-tools-trigger")?.hidden === false,
+                urlbarFocused: !!opened.gURLBar?.focused,
+                addressVisible: root.getAttribute("data-orbit-focus-address-visible") === "true",
+                toolboxVisibility: opened.getComputedStyle(opened.document.getElementById("navigator-toolbox")).visibility};
+            Services.prefs.setBoolPref("browser.orbit.focus.default", false);
+            opened.close();
+            complete(state);
+        };
+        Services.obs.addObserver(observer, "browser-delayed-startup-finished");
+    ''', script_timeout=60000)
+    result["default_focus_window"] = state
+    assert state["focus"] == "true" and state["chip"] and state["trigger"], state
+    assert state["toolboxVisibility"] == "hidden", state
+    # Firefox focuses a blank window's address field before delayed startup.
+    # Default focus mode must keep that focus visible instead of stealing it.
+    assert not state["urlbarFocused"] or state["addressVisible"], state
+    wait_for(driver, 'return Services.wm.getEnumerator("navigator:browser").hasMoreElements() && '
+             '[...Services.wm.getEnumerator("navigator:browser")].length === 1;', "default focus test window closes")
+    result["checks"].append("A new ordinary window opens in focus mode by default and keeps Firefox's initial address focus visible")
+
+
 def run_checks(driver, handle, url, result, folder):
     checks = result["checks"]
     initialize_bridge(driver)
+    verify_default_focus_window(driver, result)
     driver.execute_script('''
         window.orbitSmokePopupLifecycle = {popupshowing: 0, popuphiding: 0, popuphidden: 0};
         const popup = document.getElementById("contentAreaContextMenu");
@@ -1314,6 +1351,9 @@ def main():
             workspace=workspace_context.name, gecko_log=str(report.parent / "ux-gecko.log"),
             app_args=["-no-remote", "--remote-allow-system-access"],
             prefs={"browser.startup.page": 0, "browser.startup.homepage": "about:blank",
+                   # The main window starts classic so each focus transition is
+                   # exercised explicitly; a new window verifies the default.
+                   "browser.orbit.focus.default": False,
                    "remote.events.async.mouse.enabled": True,
                    "browser.tabs.warnOnClose": False, "browser.warnOnQuit": False},
         )

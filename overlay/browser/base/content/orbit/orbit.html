@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' chrome:; style-src 'self' chrome: 'unsafe-inline'; img-src 'self' chrome:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' chrome:; style-src 'self' chrome: 'unsafe-inline'; img-src 'self' chrome: data:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>Orbit Canvas</title>
   <link rel="icon" href="orbit.svg" type="image/svg+xml">
   <link rel="stylesheet" href="orbit.css">
@@ -20,8 +20,19 @@
   </aside>
   <main>
     <header class="board-header">
-      <div><div class="breadcrumb">My workspace <span>/</span> Canvas</div><h1>Everything, in orbit<span>.</span></h1><p>Tabs and ideas, with room to connect.</p></div>
-      <div class="header-actions"><button class="button" id="return-browser">← Return to page</button><button class="button" id="undo" title="Undo board change (Ctrl+Z)">↶ Undo</button><button class="button primary" id="add-tab">＋ Add tab</button></div>
+      <div class="board-top">
+        <div class="board-intro"><div class="breadcrumb" id="today">My workspace</div><h1><span id="greeting">Welcome back</span><span class="accent">.</span></h1><p id="board-summary">Tabs and ideas, with room to connect.</p></div>
+        <div class="header-actions"><button class="button" id="return-browser">← Return to page</button><button class="button" id="undo" title="Undo board change (Ctrl+Z)">↶ Undo</button><button class="button primary" id="add-tab">＋ Add tab</button></div>
+      </div>
+      <div class="launch-row">
+        <label class="launcher" id="launcher">
+          <span class="ui-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10.5 17a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13ZM15.5 15.5 20 20"/></svg></span>
+          <input id="address-launcher" type="text" autocomplete="off" spellcheck="false" placeholder="Search the web or enter an address" aria-label="Search the web or enter an address. Opens Orbit's address bar." aria-describedby="launcher-hint">
+          <kbd id="launcher-hint" aria-label="Keyboard shortcut">Ctrl L</kbd>
+        </label>
+        <nav id="shortcuts" class="shortcuts" aria-label="Frequently visited sites" hidden><ul id="shortcut-list"></ul><button type="button" id="shortcuts-toggle" class="shortcuts-toggle" title="Hide frequently visited sites">Hide</button></nav>
+        <button type="button" id="shortcuts-show" class="shortcuts-show" hidden title="Show frequently visited sites">Show shortcuts</button>
+      </div>
     </header>
     <div id="viewport" class="canvas-viewport" tabindex="0" role="region" aria-label="Spatial tab canvas. Arrow keys move selected cards; Space and drag pans.">
       <div id="world">
@@ -29,7 +40,7 @@
         <div id="frames"></div><div id="items"></div><div id="draft" hidden></div>
       </div>
       <div class="canvas-label">YOUR IDEAS HAVE SPACE HERE</div>
-      <div id="empty-state" hidden><span aria-hidden="true">▦</span><h2>Start with a real tab.</h2><p>Add a website or import your open tabs.<br>Then group them into frames and connect your ideas.</p><button class="button primary" id="empty-add">＋ Add a website</button></div>
+      <div id="empty-state" hidden><span aria-hidden="true">▦</span><h2>A quiet canvas.</h2><p>Add websites or bring in your open tabs.<br>Group them into frames, then connect your ideas.</p><div class="empty-actions"><button class="button primary" id="empty-add">＋ Add a website</button><button class="button" id="empty-import">Import open tabs</button></div><p class="empty-keys"><kbd>N</kbd> note <kbd>F</kbd> frame <kbd>D</kbd> draw <span aria-hidden="true">·</span> right-click for more</p></div>
       <div class="toolbar" role="toolbar" aria-label="Canvas tools">
         <button data-tool="select" aria-pressed="true" title="Select and move (V)" aria-label="Select and move"><span class="ui-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m5 3 14 10-7 1-3 7zM12 14l4 6"/></svg></span><small>Select</small></button>
         <button data-tool="hand" aria-pressed="false" title="Pan canvas (H or hold Space)" aria-label="Pan canvas"><span class="ui-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 12V7a1.5 1.5 0 0 1 3 0v4-7a1.5 1.5 0 0 1 3 0v7-5a1.5 1.5 0 0 1 3 0v6-3a1.5 1.5 0 0 1 3 0v6c0 5-3 7-6 7h-1c-2 0-4-1-5-3l-4-6a1.5 1.5 0 0 1 2-2z"/></svg></span><small>Pan</small></button><i></i>
@@ -44,13 +55,7 @@
   </main>
   <div id="toast" role="status" aria-live="polite"></div>
   <div id="radial" role="menu" aria-label="Canvas actions" hidden>
-    <div class="radial-center" aria-hidden="true">✧</div>
-    <button data-action="note" role="menuitem" style="--a:0"><span aria-hidden="true">▧</span>Note</button>
-    <button data-action="tab" role="menuitem" style="--a:1"><span aria-hidden="true">＋</span>Tab</button>
-    <button data-action="frame" role="menuitem" style="--a:2"><span aria-hidden="true">▣</span>Frame</button>
-    <button data-action="connect" role="menuitem" style="--a:3"><span aria-hidden="true">⤳</span>Connect</button>
-    <button data-action="peek" role="menuitem" style="--a:4"><span aria-hidden="true">◉</span>Peek</button>
-    <button data-action="delete" role="menuitem" style="--a:5"><span aria-hidden="true">×</span>Remove</button>
+    <div class="radial-center" aria-hidden="true"><span class="radial-center-icon">✧</span><strong id="radial-title">Canvas</strong><small id="radial-hint">Choose an action</small></div>
   </div>
   <dialog id="tab-dialog" aria-labelledby="tab-dialog-title"><form id="tab-form">
     <div class="dialog-top"><span class="eyebrow">GIVE AN IDEA A HOME</span><button type="button" class="icon close-dialog" aria-label="Close">×</button></div>
@@ -67,7 +72,7 @@
       <div><b>▣ Frames</b><p>Press F and draw a frame. Drag cards inside. Rename its heading, resize its corner, or move the heading to move the entire group. Open all its tabs with one click.</p></div>
       <div><b>◉ Peek & compare</b><p>Preview a live website while your canvas stays visible. Compare opens the card beside your active page.</p></div>
       <div><b>⤳ Connections & notes</b><p>Press C, then choose two cards or notes. Double-click a line to remove it. Press N and click to place a note, then type into it.</p></div>
-      <div><b>✧ Gestures & keyboard</b><p>Right-click for the radial menu. Hold Space and drag to pan. Ctrl + scroll zooms. Arrow keys move a selected card. Delete removes it from the canvas. Ctrl + Z undoes a board change.</p></div>
+      <div><b>✧ Gestures & keyboard</b><p>Right-click for a radial menu that fits what you clicked, then press a letter or click an action. Hold Space and drag to pan. Ctrl + scroll zooms. Arrow keys move a selected card. Delete removes it from the canvas. Ctrl + Z undoes a board change.</p></div>
     </div>
     <p class="dialog-note">Canvas removal keeps the browser tab open. Open tabs stay in Orbit’s tab strip. Workspaces are saved in this browser profile; private windows keep them only for the session.</p>
     <button class="button primary close-dialog">Start exploring</button>

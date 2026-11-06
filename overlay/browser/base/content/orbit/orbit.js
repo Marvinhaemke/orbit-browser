@@ -64,7 +64,149 @@
   let saveTimer;
   let toastTimer;
   let unsubscribe;
+  let shortcutSites = [];
+  let radialContext = "canvas";
   const history = [];
+  const isMac = /Mac/.test(navigator.platform);
+  const plural = (count, noun) => `${count} ${noun}${count === 1 ? "" : "s"}`;
+
+  const glyphs = {
+    note: "M15 20H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v10ZM15 20v-5h5M8 9h8M8 13h4",
+    plus: "M12 5v14M5 12h14",
+    frame: "M4 4h16v16H4ZM8 2v4M16 2v4M2 8h4M18 8h4",
+    draw: "m4 15 11-11a2 2 0 0 1 3 0l2 2a2 2 0 0 1 0 3L9 20l-6 1zM13 6l5 5",
+    import: "M20 10a8 8 0 0 0-14-3L3 10m0-6v6h6M4 14a8 8 0 0 0 14 3l3-3m0 6v-6h-6",
+    fit: "M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5",
+    open: "M8 5H4v15h15v-4M10 14 20 4m-7 0h7v7",
+    peek: "M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12ZM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z",
+    split: "M3 5h18v14H3ZM12 5v14",
+    connect: "M5 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4ZM19 21a2 2 0 1 0 0-4 2 2 0 0 0 0 4ZM7 5h5a4 4 0 0 1 4 4v8",
+    delete: "M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3",
+    edit: "M4 20h4L19 9l-4-4L4 16ZM13 7l4 4",
+    color: "M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11Z",
+    zoom: "M10.5 17a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13ZM15.5 15.5 20 20M10.5 8v5M8 10.5h5",
+  };
+  const icon = (name, size = 20) => {
+    const svg = document.createElementNS(SVG, "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("aria-hidden", "true");
+    svg.setAttribute("width", size);
+    svg.setAttribute("height", size);
+    svg.classList.add("glyph");
+    const path = document.createElementNS(SVG, "path");
+    path.setAttribute("d", glyphs[name] || glyphs.plus);
+    svg.append(path);
+    return svg;
+  };
+  // Each right-click offers the actions for what is under the pointer.
+  const radialActions = {
+    canvas: [["note", "Note", "n", "note"], ["tab", "Add tab", "t", "plus"], ["frame", "Frame", "f", "frame"],
+      ["draw", "Draw", "d", "draw"], ["import", "Import tabs", "i", "import"], ["fit", "Fit board", "z", "fit"]],
+    card: [["open", "Open", "o", "open"], ["peek", "Peek", "p", "peek"], ["split", "Compare", "s", "split"],
+      ["connect", "Connect", "c", "connect"], ["delete", "Remove", "x", "delete"], ["note", "Note", "n", "note"]],
+    note: [["edit", "Edit", "e", "edit"], ["color", "Color", "k", "color"], ["connect", "Connect", "c", "connect"],
+      ["delete", "Remove", "x", "delete"], ["note", "New note", "n", "note"], ["tab", "Add tab", "t", "plus"]],
+    frame: [["open-frame", "Open tabs", "o", "open"], ["rename", "Rename", "e", "edit"], ["focus-frame", "Zoom to", "z", "zoom"],
+      ["delete", "Remove", "x", "delete"], ["note", "Note", "n", "note"], ["tab", "Add tab", "t", "plus"]],
+  };
+
+  function greetingFor(date) {
+    const hour = date.getHours();
+    return hour >= 5 && hour < 12 ? "Good morning" : hour >= 12 && hour < 18 ? "Good afternoon" : "Good evening";
+  }
+
+  function renderIntro() {
+    const now = new Date();
+    $("greeting").textContent = greetingFor(now);
+    $("today").textContent = now.toLocaleDateString(undefined, {weekday: "long", month: "long", day: "numeric"});
+    const cards = board.items.filter(item => item.type === "tab").length;
+    const notes = board.items.length - cards;
+    const parts = [];
+    if (nativeTabs.length) parts.push(plural(nativeTabs.length, "open tab"));
+    if (cards) parts.push(`${plural(cards, "card")} on your canvas`);
+    if (board.frames.length) parts.push(plural(board.frames.length, "frame"));
+    if (notes) parts.push(plural(notes, "note"));
+    $("board-summary").textContent = parts.length ? parts.join(" · ") : "A quiet workspace. Add a site, a note, or a frame.";
+  }
+
+  function siteInitial(site) {
+    const labels = String(site.host || domain(site.url)).split(".").filter(Boolean);
+    let index = labels.length - 2;
+    if (index > 0 && labels.at(-1).length === 2 && labels[index].length <= 3) index--;
+    return [...(labels[Math.max(0, index)] || site.title || "•")][0].toLocaleUpperCase();
+  }
+
+  function renderShortcuts() {
+    const list = $("shortcut-list");
+    list.replaceChildren(...shortcutSites.map(site => {
+      const item = el("li", "shortcut");
+      const open = el("button", "shortcut-open");
+      open.type = "button";
+      open.title = `${site.title}\n${site.url}\nClick to open here · Ctrl+click for a background tab`;
+      const mark = el("span", "shortcut-mark");
+      if (site.favicon) {
+        const image = el("img");
+        image.alt = "";
+        image.src = site.favicon;
+        mark.append(image);
+      } else mark.textContent = siteInitial(site);
+      open.append(mark, el("span", "shortcut-title", site.title));
+      const visit = event => {
+        const background = event.button === 1 || event.ctrlKey || event.metaKey || event.shiftKey;
+        try {
+          persist();
+          if (background) {
+            bridge.openTab({url: site.url, background: true});
+            toast(`Opened ${site.host || domain(site.url)} in a background tab`);
+          } else bridge.navigate({url: site.url});
+        } catch (error) { report(error); }
+      };
+      open.addEventListener("click", visit);
+      open.addEventListener("auxclick", event => { if (event.button === 1) { event.preventDefault(); visit(event); } });
+      const hide = button("×", `Remove ${site.title} from shortcuts`, async () => {
+        try {
+          bridge.hideShortcut(site.url);
+          shortcutSites = shortcutSites.filter(candidate => candidate.url !== site.url);
+          renderShortcuts();
+          toast("Shortcut removed");
+          await loadShortcuts();
+        } catch (error) { report(error); }
+      }, "shortcut-hide");
+      hide.setAttribute("aria-label", `Remove ${site.title} from shortcuts`);
+      item.append(open, hide);
+      return item;
+    }));
+    $("shortcuts").hidden = !shortcutSites.length;
+  }
+
+  async function loadShortcuts() {
+    let preferences = {shortcuts: false, privateWindow: false};
+    try { preferences = bridge.preferences?.() || preferences; } catch (error) { console.error("Orbit shortcuts:", error); }
+    $("shortcuts-show").hidden = preferences.shortcuts || preferences.privateWindow;
+    if (!preferences.shortcuts) {
+      shortcutSites = [];
+      $("shortcuts").hidden = true;
+      return;
+    }
+    try { shortcutSites = (await bridge.topSites?.()) || []; }
+    catch (error) { shortcutSites = []; console.error("Orbit shortcuts:", error); }
+    renderShortcuts();
+  }
+
+  function setShortcutsVisible(visible) {
+    try {
+      bridge.setShortcutsVisible(visible);
+      if (!visible) toast("Shortcuts hidden · Show them again beside the search field");
+      loadShortcuts();
+    } catch (error) { report(error); }
+  }
+
+  function handOffAddress(value = "") {
+    try {
+      persist();
+      bridge.focusAddress(String(value).slice(0, 2048));
+    } catch (error) { report(error); }
+  }
 
   function toast(message) {
     clearTimeout(toastTimer);
@@ -267,7 +409,7 @@
     node.style.setProperty("--accent", color);
     node.style.setProperty("--wash", `${color}22`);
     const top = el("div", "card-top");
-    top.append(el("div", "site-mark", domain(item.url).slice(0, 1).toUpperCase()));
+    top.append(el("div", "site-mark", siteInitial({url: item.url, title: item.title})));
     const site = el("div", "card-site");
     site.append(el("div", "card-domain", domain(item.url)),
       el("div", "tab-status", tab ? (tab.active ? "Active browser tab" : "Open in Orbit") : "Saved website"));
@@ -299,12 +441,7 @@
     node.style.setProperty("--note-color", item.color || noteColors[0]);
     positionNode(node, item);
     const grip = el("div", "note-grip");
-    grip.append(el("span", "", "⋮⋮ NOTE"), button("◐", "Change note color", () => {
-      checkpoint();
-      item.color = noteColors[(noteColors.indexOf(item.color) + 1) % noteColors.length];
-      node.style.setProperty("--note-color", item.color);
-      persist();
-    }));
+    grip.append(el("span", "", "⋮⋮ NOTE"), button("◐", "Change note color", () => cycleNoteColor(item)));
     const textarea = el("textarea");
     textarea.value = item.text || "";
     textarea.placeholder = "Put a thought here…";
@@ -320,6 +457,32 @@
     textarea.addEventListener("blur", persist);
     node.append(grip, textarea);
     return node;
+  }
+
+  function cycleNoteColor(item) {
+    if (item?.type !== "note") return;
+    checkpoint();
+    item.color = noteColors[(noteColors.indexOf(item.color) + 1) % noteColors.length];
+    document.querySelector(`[data-id="${item.id}"]`)?.style.setProperty("--note-color", item.color);
+    persist();
+  }
+
+  async function openFrameTabs(frame) {
+    try {
+      persist();
+      await bridge.openFrame(frame.id);
+      board = await bridge.getBoard();
+      for (const item of board.items.filter(candidate => candidate.type === "tab" && candidate.tabId)) {
+        retainNativeBinding(item.id, item.tabId);
+      }
+      await refreshTabs();
+    }
+    catch (error) { report(error); }
+  }
+
+  async function importTabs() {
+    try { await refreshTabs(true); updateMembership(); render(); fit(); persist(); }
+    catch (error) { report(error); }
   }
 
   function renderFrames() {
@@ -351,18 +514,7 @@
       });
       name.append(input);
       const count = board.items.filter(item => item.type === "tab" && item.frameId === frame.id).length;
-      const open = button(`Open ${count} ${count === 1 ? "tab" : "tabs"} ↗`, "Open every real tab in this frame", async () => {
-        try {
-          persist();
-          await bridge.openFrame(frame.id);
-          board = await bridge.getBoard();
-          for (const item of board.items.filter(candidate => candidate.type === "tab" && candidate.tabId)) {
-            retainNativeBinding(item.id, item.tabId);
-          }
-          await refreshTabs();
-        }
-        catch (error) { report(error); }
-      }, "open-frame");
+      const open = button(`Open ${count} ${count === 1 ? "tab" : "tabs"} ↗`, "Open every real tab in this frame", () => openFrameTabs(frame), "open-frame");
       open.disabled = count === 0;
       header.append(name, open);
       const resize = button("⌟", "Drag to resize this frame", () => {}, "frame-resize");
@@ -453,6 +605,7 @@
     $("empty-state").hidden = !!(board.items.length || board.frames.length || board.strokes.length);
     $("tab-count").textContent = board.items.filter(item => item.type === "tab").length;
     $("undo").disabled = !history.length;
+    renderIntro();
   }
 
   function updateMembership() {
@@ -553,24 +706,86 @@
       toast(tabs.length ? `Imported ${tabs.length} open ${tabs.length === 1 ? "tab" : "tabs"}` : "All open websites are already on this canvas");
     }
     if (!isTyping(document.activeElement) && !drag) render();
+    else renderIntro();
     if (changed) persist();
   }
 
   function hideRadial() { $("radial").hidden = true; }
 
+  function radialTitle() {
+    const item = board.items.find(candidate => candidate.id === selected);
+    const frame = board.frames.find(candidate => candidate.id === selected);
+    return radialContext === "card" ? domain(item?.url) : radialContext === "note" ? "Note" :
+      radialContext === "frame" ? frame?.title || "Frame" : "Canvas";
+  }
+
+  function describeRadial(node) {
+    $("radial-title").textContent = node ? node.dataset.label : radialTitle();
+    $("radial-hint").textContent = node ? `Press ${node.dataset.key.toUpperCase()}` : "Press a letter or click";
+  }
+
   function showRadial(event) {
     event.preventDefault();
-    const target = event.target.closest("[data-id]");
-    if (target) select(target.dataset.id);
-    else select(null);
     radialPoint = point(event);
+    const target = event.target.closest("[data-id]");
+    const header = event.target.closest("[data-frame-move]");
+    const item = target && board.items.find(candidate => candidate.id === target.dataset.id);
+    const frame = header ? board.frames.find(candidate => candidate.id === header.dataset.frameMove) :
+      !item && board.frames.filter(candidate => radialPoint.x >= candidate.x && radialPoint.x <= candidate.x + candidate.w &&
+        radialPoint.y >= candidate.y && radialPoint.y <= candidate.y + candidate.h)
+        .sort((a, b) => a.w * a.h - b.w * b.h)[0];
+    radialContext = item ? (item.type === "tab" ? "card" : "note") : frame ? "frame" : "canvas";
+    select(item?.id || frame?.id || null);
     const radial = $("radial");
-    radial.style.left = `${clamp(event.clientX - 116, 8, Math.max(8, innerWidth - 240))}px`;
-    radial.style.top = `${clamp(event.clientY - 116, 8, Math.max(8, innerHeight - 240))}px`;
+    radial.querySelectorAll("button").forEach(node => node.remove());
+    radialActions[radialContext].forEach(([action, label, key, glyph], index) => {
+      const node = el("button");
+      node.type = "button";
+      node.dataset.action = action;
+      node.dataset.label = label;
+      node.dataset.key = key;
+      node.setAttribute("role", "menuitem");
+      node.setAttribute("aria-keyshortcuts", key.toUpperCase());
+      node.style.setProperty("--a", index);
+      const hint = el("kbd", "", key.toUpperCase());
+      hint.setAttribute("aria-hidden", "true");
+      node.append(icon(glyph), el("span", "radial-label", label), hint);
+      if (action === "open-frame") node.disabled = !board.items.some(candidate => candidate.type === "tab" && candidate.frameId === frame?.id);
+      node.addEventListener("pointerenter", () => describeRadial(node));
+      node.addEventListener("focus", () => describeRadial(node));
+      node.addEventListener("pointerleave", () => describeRadial(radial.contains(document.activeElement) && document.activeElement.dataset.label ? document.activeElement : null));
+      radial.append(node);
+    });
+    radial.dataset.context = radialContext;
+    radial.setAttribute("aria-label", `${radialTitle()} actions`);
+    radial.style.left = `${clamp(event.clientX - 130, 8, Math.max(8, innerWidth - 268))}px`;
+    radial.style.top = `${clamp(event.clientY - 130, 8, Math.max(8, innerHeight - 268))}px`;
     radial.hidden = false;
-    radial.querySelector('[data-action="peek"]').disabled = !board.items.some(item => item.id === selected && item.type === "tab");
-    radial.querySelector('[data-action="delete"]').disabled = !selected;
-    radial.querySelector("button").focus();
+    describeRadial(null);
+    radial.querySelector("button:not(:disabled)")?.focus();
+    describeRadial(null);
+  }
+
+  function runRadial(action) {
+    hideRadial();
+    const item = board.items.find(candidate => candidate.id === selected);
+    const frame = board.frames.find(candidate => candidate.id === selected);
+    if (action === "note") addNote(radialPoint);
+    else if (action === "tab") showAdd(radialPoint);
+    else if (action === "frame") { checkpoint(); addFrame(radialPoint); }
+    else if (action === "draw") { setTool("draw"); viewport.focus({preventScroll: true}); }
+    else if (action === "import") importTabs();
+    else if (action === "fit") fit();
+    else if (["open", "peek", "split"].includes(action) && item?.type === "tab") tabAction(item, action);
+    else if (action === "connect") { setTool("connect"); if (item) connectTo(item); }
+    else if (action === "delete") removeSelection();
+    else if (action === "edit" && item) document.querySelector(`[data-id="${item.id}"] textarea`)?.focus();
+    else if (action === "color") cycleNoteColor(item);
+    else if (action === "open-frame" && frame) openFrameTabs(frame);
+    else if (action === "rename" && frame) {
+      const input = document.querySelector(`[data-id="${frame.id}"] .frame-name input`);
+      input?.focus(); input?.select();
+    } else if (action === "focus-frame" && frame) fit(frame);
   }
 
   function pointerDown(event) {
@@ -716,7 +931,10 @@
     }
     if (isTyping(event.target) || document.querySelector("dialog[open]")) return;
     if (!$("radial").hidden) {
-      if (event.key === "Escape") { hideRadial(); viewport.focus(); event.preventDefault(); }
+      if (event.key === "Escape") { hideRadial(); viewport.focus(); event.preventDefault(); return; }
+      const shortcut = !event.ctrlKey && !event.metaKey && !event.altKey && event.key.length === 1 &&
+        $("radial").querySelector(`button[data-key="${CSS.escape(event.key.toLowerCase())}"]:not(:disabled)`);
+      if (shortcut) { event.preventDefault(); runRadial(shortcut.dataset.action); return; }
       if (["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp"].includes(event.key)) {
         const buttons = [...$("radial").querySelectorAll("button:not(:disabled)")];
         const step = ["ArrowRight", "ArrowDown"].includes(event.key) ? 1 : -1;
@@ -764,6 +982,7 @@
       render();
       if (!saved && board.items.length) fit();
       persist();
+      loadShortcuts();
       unsubscribe = bridge.subscribe((_tabs, change) => {
         if (change?.type === "board-changed") {
           // Every native canvas in this window shares the same workspace. An
@@ -788,10 +1007,35 @@
   $("empty-add").addEventListener("click", () => showAdd());
   $("return-browser").addEventListener("click", () => { persist(); bridge.hideCanvas(); });
   $("guide-button").addEventListener("click", () => $("guide").showModal());
-  $("import-tabs").addEventListener("click", async () => {
-    try { await refreshTabs(true); updateMembership(); render(); fit(); persist(); }
-    catch (error) { report(error); }
+  $("import-tabs").addEventListener("click", importTabs);
+  $("empty-import").addEventListener("click", importTabs);
+  $("launcher-hint").textContent = isMac ? "⌘ L" : "Ctrl L";
+  const launcher = $("address-launcher");
+  // Firefox's address bar owns search, suggestions and URL handling. Clicking
+  // here opens it; typing here moves the text into it, like Firefox's New Tab.
+  $("launcher").addEventListener("mousedown", event => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    handOffAddress(launcher.value);
+    launcher.value = "";
   });
+  launcher.addEventListener("input", () => {
+    const value = launcher.value;
+    launcher.value = "";
+    if (value) handOffAddress(value);
+  });
+  launcher.addEventListener("keydown", event => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    handOffAddress(launcher.value);
+    launcher.value = "";
+  });
+  $("shortcuts-toggle").addEventListener("click", () => setShortcutsVisible(false));
+  $("shortcuts-show").addEventListener("click", () => setShortcutsVisible(true));
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && bridge) { renderIntro(); loadShortcuts(); }
+  });
+  setInterval(() => { if (document.visibilityState === "visible") renderIntro(); }, 60000);
   $("sidebar-frame").addEventListener("click", () => { setTool("frame"); viewport.focus(); });
   $("undo").addEventListener("click", undo);
   for (const key of ["fit", "zoom-value", "fit-nav"]) $(key).addEventListener("click", () => fit());
@@ -831,22 +1075,8 @@
     } finally { submit.disabled = false; }
   });
   $("radial").addEventListener("click", event => {
-    const action = event.target.closest("[data-action]")?.dataset.action;
-    if (!action) return;
-    hideRadial();
-    if (action === "note") addNote(radialPoint);
-    if (action === "tab") showAdd(radialPoint);
-    if (action === "frame") { checkpoint(); addFrame(radialPoint); }
-    if (action === "connect") {
-      const item = board.items.find(i => i.id === selected);
-      setTool("connect");
-      if (item) connectTo(item);
-    }
-    if (action === "peek") {
-      const item = board.items.find(i => i.id === selected && i.type === "tab");
-      if (item) tabAction(item, "peek");
-    }
-    if (action === "delete") removeSelection();
+    const node = event.target.closest("[data-action]");
+    if (node && !node.disabled) runRadial(node.dataset.action);
   });
   viewport.addEventListener("contextmenu", showRadial);
   viewport.addEventListener("pointerdown", pointerDown);

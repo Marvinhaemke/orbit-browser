@@ -88,13 +88,37 @@ button:active:not(:disabled) { transform: translateY(1px); }
 #save-status { font-size: 10px; color: var(--orbit-muted); border-top: 1px solid var(--orbit-line); margin-top: 24px; padding-top: 16px; line-height: 1.5; }
 
 main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.board-header { height: 142px; flex-shrink: 0; display: flex; justify-content: space-between; align-items: center; padding: 24px 28px 22px 12px; gap: 18px; }
-.breadcrumb { font-size: 10px; color: var(--orbit-muted); margin-bottom: 11px; }
-.breadcrumb span { margin: 0 8px; color: var(--orbit-soft); }
+.board-header { flex-shrink: 0; display: flex; flex-direction: column; gap: 16px; padding: 22px 28px 18px 12px; min-width: 0; }
+.board-top { display: flex; justify-content: space-between; align-items: center; gap: 18px; min-width: 0; }
+.board-intro { min-width: 0; }
+.breadcrumb { font-size: 10px; font-weight: 600; letter-spacing: .6px; text-transform: uppercase; color: var(--orbit-muted); margin-bottom: 8px; }
 h1 { font-size: 29px; font-weight: 650; letter-spacing: -1.1px; margin: 0; line-height: 1.2; }
-h1 > span { color: var(--orbit-accent-ink); }
-.board-header p { font-size: 12px; color: var(--orbit-muted); margin: 9px 0 0; }
-.header-actions { display: flex; gap: 9px; align-items: center; }
+h1 > .accent { color: var(--orbit-accent-ink); }
+.board-header p { font-size: 12px; color: var(--orbit-muted); margin: 7px 0 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.header-actions { display: flex; gap: 9px; align-items: center; flex-shrink: 0; }
+
+/* The new-tab launcher hands off to Firefox's own address bar. */
+.launch-row { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.launcher { flex: 0 1 460px; min-width: 240px; height: 50px; display: flex; align-items: center; gap: 10px; padding: 0 10px 0 16px; border: 1px solid var(--orbit-line); border-radius: 25px; background: var(--orbit-base); color: var(--orbit-muted); box-shadow: var(--orbit-inset-shadow); cursor: text; transition: border-color 160ms ease, box-shadow 220ms ease; }
+.launcher:hover { border-color: color-mix(in srgb, var(--orbit-lagoon) 55%, var(--orbit-line)); }
+.launcher:focus-within { border-color: var(--orbit-lagoon); box-shadow: var(--orbit-inset-shadow), 0 0 0 3px var(--orbit-accent-wash); }
+.launcher .ui-icon svg { width: 18px; height: 18px; }
+.launcher input { flex: 1; min-width: 0; height: 100%; border: 0; outline: none; background: transparent; color: var(--orbit-text); font-size: 13px; cursor: text; }
+.launcher input::placeholder { color: var(--orbit-muted); opacity: 1; }
+kbd { font: 600 9.5px/1 system-ui, sans-serif; letter-spacing: .3px; padding: 5px 7px; border-radius: 8px; border: 1px solid var(--orbit-line); background: var(--orbit-raised); color: var(--orbit-muted); box-shadow: 0 1px 0 var(--orbit-highlight), 1px 2px 3px var(--orbit-shadow); white-space: nowrap; }
+.shortcuts { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; }
+.shortcuts ul { list-style: none; margin: 0; padding: 4px 2px; display: flex; gap: 8px; min-width: 0; overflow-x: auto; scrollbar-width: none; mask-image: linear-gradient(90deg, #000 calc(100% - 24px), transparent); }
+.shortcut { position: relative; flex: 0 0 auto; }
+.shortcut-open { display: flex; align-items: center; gap: 8px; height: 40px; max-width: 168px; padding: 0 14px 0 6px; border: 1px solid var(--orbit-highlight); border-radius: 20px; background: linear-gradient(145deg, var(--orbit-raised), var(--orbit-surface)); box-shadow: 3px 4px 9px var(--orbit-shadow), -2px -2px 7px var(--orbit-highlight); font-size: 11.5px; font-weight: 550; color: var(--orbit-text); }
+.shortcut-open:hover { transform: translateY(-2px); border-color: color-mix(in srgb, var(--orbit-lagoon) 45%, var(--orbit-highlight)); }
+.shortcut-mark { width: 28px; height: 28px; flex-shrink: 0; display: grid; place-items: center; border-radius: 50%; background: var(--orbit-base); box-shadow: var(--orbit-inset-shadow); color: var(--orbit-accent-ink); font-weight: 700; font-size: 12px; overflow: hidden; }
+.shortcut-mark img { width: 16px; height: 16px; display: block; }
+.shortcut-title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.shortcut-hide { position: absolute; top: -5px; right: -4px; width: 18px; height: 18px; display: grid; place-items: center; border-radius: 50%; font-size: 12px; line-height: 1; color: var(--orbit-muted); background: var(--orbit-raised); border: 1px solid var(--orbit-line); opacity: 0; box-shadow: 1px 2px 4px var(--orbit-shadow); }
+.shortcut:hover .shortcut-hide, .shortcut:focus-within .shortcut-hide { opacity: 1; }
+.shortcut-hide:hover { color: var(--orbit-text); border-color: var(--orbit-lagoon); }
+.shortcuts-toggle, .shortcuts-show { flex-shrink: 0; font-size: 10.5px; color: var(--orbit-muted); padding: 6px 9px; border-radius: 10px; }
+.shortcuts-toggle:hover, .shortcuts-show:hover { color: var(--orbit-accent-ink); background: var(--orbit-accent-wash); }
 .button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-size: 12px; font-weight: 550; padding: 11px 15px; border: 1px solid var(--orbit-highlight); border-radius: 14px; background: linear-gradient(145deg, var(--orbit-raised), var(--orbit-surface)); white-space: nowrap; box-shadow: 4px 4px 10px var(--orbit-shadow), -3px -3px 9px var(--orbit-highlight); }
 .button .ui-icon svg { width: 15px; height: 15px; }
 .button:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 5px 7px 13px var(--orbit-shadow), -3px -3px 9px var(--orbit-highlight); }
@@ -187,16 +211,24 @@ h1 > span { color: var(--orbit-accent-ink); }
 #empty-state h2 { font-size: 23px; font-weight: 650; color: var(--orbit-text); margin: 22px 0 12px; }
 #empty-state p { font-size: 12px; line-height: 1.8; margin: 10px 0 22px; }
 #empty-state button { pointer-events: auto; }
+.empty-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+#empty-state .empty-keys { margin: 18px 0 0; font-size: 11px; display: flex; gap: 6px; align-items: center; justify-content: center; flex-wrap: wrap; }
 #toast { position: fixed; left: 50%; bottom: 115px; transform: translate(-50%, 10px); max-width: min(480px, calc(100vw - 32px)); background: #1f2d43f2; color: #edf5fb; box-shadow: 0 8px 28px #151b2c35, inset 0 1px 0 #ffffff17; border: 1px solid #ffffff25; border-radius: 16px; padding: 12px 18px; opacity: 0; pointer-events: none; transition: opacity 180ms ease, transform 320ms var(--orbit-spring); font-size: 12px; z-index: 100; backdrop-filter: blur(14px); }
 #toast.visible { opacity: 1; transform: translate(-50%, 0); }
 
-#radial { position: fixed; width: 232px; height: 232px; border-radius: 50%; background: linear-gradient(145deg, color-mix(in srgb, var(--orbit-raised) 94%, transparent), color-mix(in srgb, var(--orbit-surface) 92%, transparent)); box-shadow: 12px 15px 42px var(--orbit-deep-shadow), -4px -4px 16px var(--orbit-highlight), inset 0 1px 0 var(--orbit-highlight); border: 1px solid var(--orbit-highlight); backdrop-filter: blur(20px); z-index: 50; animation: orbit-emerge 300ms var(--orbit-spring); }
-.radial-center { position: absolute; left: 91px; top: 91px; width: 50px; height: 50px; display: grid; place-items: center; font-size: 27px; color: var(--orbit-accent-ink); border: 1px solid var(--orbit-line); border-radius: 50%; background: linear-gradient(135deg, var(--orbit-accent-wash), #8c86f419); box-shadow: var(--orbit-inset-shadow); }
-#radial button { position: absolute; left: 88px; top: 88px; width: 56px; height: 56px; border: 1px solid transparent; border-radius: 50%; font-size: 10px; transform: rotate(calc(var(--a) * 60deg)) translateY(-79px) rotate(calc(var(--a) * -60deg)); }
-#radial button > span { display: block; font-size: 23px; color: var(--orbit-accent-ink); margin-bottom: 2px; }
-#radial button:hover, #radial button:focus-visible { background: var(--orbit-accent-wash); border-color: var(--orbit-highlight); box-shadow: 2px 3px 8px var(--orbit-shadow), inset 0 1px 0 var(--orbit-highlight); }
+#radial { position: fixed; width: 260px; height: 260px; border-radius: 50%; background: linear-gradient(145deg, color-mix(in srgb, var(--orbit-raised) 94%, transparent), color-mix(in srgb, var(--orbit-surface) 92%, transparent)); box-shadow: 12px 15px 42px var(--orbit-deep-shadow), -4px -4px 16px var(--orbit-highlight), inset 0 1px 0 var(--orbit-highlight); border: 1px solid var(--orbit-highlight); backdrop-filter: blur(20px); z-index: 50; animation: orbit-emerge 300ms var(--orbit-spring); }
+.radial-center { position: absolute; left: 84px; top: 84px; width: 92px; height: 92px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; padding: 10px; text-align: center; color: var(--orbit-accent-ink); border: 1px solid var(--orbit-line); border-radius: 50%; background: linear-gradient(135deg, var(--orbit-accent-wash), #8c86f419); box-shadow: var(--orbit-inset-shadow); pointer-events: none; }
+.radial-center-icon { font-size: 15px; line-height: 1; }
+.radial-center strong { max-width: 72px; font-size: 11px; font-weight: 650; line-height: 1.25; color: var(--orbit-text); overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+.radial-center small { font-size: 8.5px; color: var(--orbit-muted); }
+#radial button { position: absolute; left: 101px; top: 101px; width: 58px; height: 58px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; border: 1px solid var(--orbit-highlight); border-radius: 50%; font-size: 9.5px; font-weight: 550; background: linear-gradient(145deg, var(--orbit-raised), var(--orbit-surface)); box-shadow: 3px 4px 8px var(--orbit-shadow), -2px -2px 6px var(--orbit-highlight); transform: rotate(calc(var(--a) * 60deg)) translateY(-86px) rotate(calc(var(--a) * -60deg)); animation: orbit-radial-pop 260ms var(--orbit-spring) both; animation-delay: calc(var(--a) * 18ms); }
+#radial button .glyph { width: 19px; height: 19px; fill: none; stroke: var(--orbit-accent-ink); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+#radial button kbd { position: absolute; top: -3px; right: -3px; padding: 3px 5px; font-size: 8.5px; border-radius: 7px; opacity: 0; transition: opacity 140ms ease; }
+#radial:focus-within button kbd, #radial button:hover kbd { opacity: 1; }
+#radial button:hover:not(:disabled), #radial button:focus-visible { background: linear-gradient(135deg, color-mix(in srgb, var(--orbit-lagoon) 22%, var(--orbit-raised)), var(--orbit-surface)); border-color: color-mix(in srgb, var(--orbit-lagoon) 50%, var(--orbit-highlight)); outline: none; }
 /* Keep each action on its radial position when it is pressed. */
-#radial button:active:not(:disabled) { transform: rotate(calc(var(--a) * 60deg)) translateY(-78px) rotate(calc(var(--a) * -60deg)); }
+#radial button:active:not(:disabled) { transform: rotate(calc(var(--a) * 60deg)) translateY(-85px) rotate(calc(var(--a) * -60deg)); }
+@keyframes orbit-radial-pop { from { opacity: 0; scale: .7; } to { opacity: 1; scale: 1; } }
 
 dialog { border: 1px solid var(--orbit-highlight); border-radius: 26px; padding: 28px; width: 440px; max-width: calc(100vw - 32px); color: var(--orbit-text); background: linear-gradient(145deg, var(--orbit-raised), var(--orbit-surface)); box-shadow: 0 24px 80px #151b2c30, inset 0 1px 0 var(--orbit-highlight); animation: orbit-emerge 280ms var(--orbit-spring); }
 dialog::backdrop { background: #151b2c50; backdrop-filter: blur(9px); }
@@ -243,6 +275,8 @@ dialog input, dialog select { width: 100%; display: block; margin-top: 9px; bord
 @media (max-width: 1200px) {
   .sidebar { width: 198px; margin-right: 15px; }
   .board-header { padding-right: 23px; gap: 12px; }
+  .launcher { flex-basis: 380px; }
+  .shortcut-open { max-width: 132px; }
   .board-header h1 { font-size: 26px; }
   .header-actions { gap: 6px; }
   .button { padding: 10px 12px; font-size: 11px; }
@@ -253,14 +287,18 @@ dialog input, dialog select { width: 100%; display: block; margin-top: 9px; bord
   .workspace-title { margin-inline: 10px; }
   .wordmark { padding-inline: 8px; font-size: 25px; gap: 8px; }
   .wordmark small { display: none; }
-  .board-header { height: 135px; padding-left: 6px; gap: 10px; }
+  .board-header { padding-left: 6px; gap: 10px; }
   .board-header h1 { font-size: 24px; }
   .board-header p { max-width: 220px; line-height: 1.5; }
   .header-actions { flex-wrap: wrap; justify-content: end; max-width: 190px; }
+  .launcher { flex: 1 1 auto; }
+  .shortcut-title { display: none; }
+  .shortcut-open { padding-right: 6px; }
 }
 @media (max-width: 760px) {
   .sidebar { display: none; }
-  .board-header { height: 126px; padding: 18px 21px; }
+  .board-header { padding: 18px 21px 14px; }
+  .launcher kbd { display: none; }
   .board-header h1 { font-size: 23px; }
   .board-header p { max-width: 170px; font-size: 11px; }
   .canvas-viewport { margin: 0 12px 12px; border-radius: 24px; }
@@ -275,20 +313,23 @@ dialog input, dialog select { width: 100%; display: block; margin-top: 9px; bord
   .sidebar-bottom { padding-top: 12px; }
   .sidebar-bottom .sparkle, .sidebar-bottom p { display: none; }
   #save-status { margin-top: 16px; padding-top: 12px; }
-  .board-header { height: 112px; }
+  .board-header { padding-block: 14px 12px; gap: 10px; }
+  .board-header p, .breadcrumb { display: none; }
+  .launcher { height: 42px; }
   #empty-state > span { width: 52px; height: 52px; border-radius: 17px; }
   #empty-state h2 { margin-top: 14px; font-size: 20px; }
   #empty-state p { margin-bottom: 14px; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
-  .card:hover, .button:hover:not(:disabled), .toolbar button:hover { transform: none; }
+  .card:hover, .button:hover:not(:disabled), .toolbar button:hover, .shortcut-open:hover { transform: none; }
 }
 @media (forced-colors: active) {
   :root { --orbit-text: CanvasText; --orbit-muted: CanvasText; --orbit-base: Canvas; --orbit-canvas: Canvas; --orbit-surface: Canvas; --orbit-raised: Canvas; --orbit-line: ButtonBorder; --orbit-highlight: ButtonBorder; --orbit-accent-ink: LinkText; --orbit-focus: Highlight; --orbit-accent-wash: Canvas; }
   *, *::before, *::after { box-shadow: none !important; text-shadow: none !important; }
   .canvas-viewport, .canvas-viewport::before { background-image: none; }
-  .sidebar, .card, .toolbar, .zoom-controls, .button, dialog, #radial, .radial-center, .frame, .note { background: Canvas; border-color: ButtonBorder; }
+  .sidebar, .card, .toolbar, .zoom-controls, .button, dialog, #radial, .radial-center, .frame, .note, .launcher, .shortcut-open, #radial button, kbd { background: Canvas; border-color: ButtonBorder; }
+  #radial button .glyph { stroke: ButtonText; }
   .note textarea, .note-grip { color: CanvasText; }
   .nav.active, .toolbar button[aria-pressed="true"] { outline: 1px solid Highlight; color: Highlight; }
   .button.primary { color: ButtonText; background: ButtonFace; }

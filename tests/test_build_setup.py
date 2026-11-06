@@ -144,6 +144,7 @@ class SourceGuardTests(unittest.TestCase):
         self.assertIs(policy["policies"]["DisableAppUpdate"], True)
         modified_prefs = prepare.transform("browser/branding/unofficial/pref/firefox-branding.js", self.fixture["browser/branding/unofficial/pref/firefox-branding.js"])
         self.assertIn('pref("app.update.url", "");', modified_prefs)
+        self.assertIn('pref("browser.orbit.focus.default", true);', modified_prefs)
 
 
 class PackageGuardTests(unittest.TestCase):

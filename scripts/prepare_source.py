@@ -110,6 +110,8 @@ def transform(path: str, original: str, root: Path = ROOT) -> str:
             'pref("browser.shell.checkDefaultBrowser", false);\n'
             'pref("browser.tabs.splitView.enabled", true);\n'
             'pref("browser.startup.page", 3);\n'
+            "// New browser windows open in Orbit focus mode; Orbit commands can change this.\n"
+            'pref("browser.orbit.focus.default", true);\n'
         )
     raise ValueError(f"No reviewed transform for {path}")
 

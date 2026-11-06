@@ -126,7 +126,8 @@ function visualLabel(node) {
 
 function safeImage(icon) {
   if (typeof icon !== "string" || icon.length > 65536) return null;
-  if (/^data:image\/(?:png|jpeg|gif|webp);base64,[a-z\d+/=]+$/i.test(icon)) return icon;
+  // Firefox gives tabs local raster favicons; ICO is the most common format.
+  if (/^data:image\/(?:png|jpeg|gif|webp|x-icon|vnd\.microsoft\.icon);base64,[a-z\d+/=]+$/i.test(icon)) return icon;
   if (/^chrome:\/\/(?:browser|global)\/skin\/[a-z\d/_.,@-]+(?:\.svg|\.png)$/i.test(icon)) return icon;
   return null;
 }
@@ -139,31 +140,142 @@ function iconText(node) {
   return String(node.label || "•").trim().slice(0, 1).toUpperCase();
 }
 
+/** Stroke glyphs on a 24px grid. They describe the command, so two different
+ * actions never share a meaningless first-letter placeholder. */
+const GLYPHS = {
+  plus: "M12 5v14M5 12h14",
+  back: "M19 12H5m6-6-6 6 6 6",
+  forward: "M5 12h14m-6-6 6 6-6 6",
+  reload: "M19 8a8 8 0 1 0 1 7M19 3v5h-5",
+  star: "m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9Z",
+  download: "M12 3v12m-5-5 5 5 5-5M4 17v4h16v-4",
+  external: "M8 5H4v15h15v-4M10 14 20 4m-7 0h7v7",
+  list: "M4 4h16v16H4ZM8 8h8M8 12h8M8 16h5",
+  frame: "M4 4h16v16H4ZM8 8h8v8H8Z",
+  grid: "M4 4h16v16H4ZM12 4v16M4 12h16",
+  target: "M20 12a8 8 0 1 1-16 0 8 8 0 0 1 16 0ZM15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z",
+  sparkle: "m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5Z",
+  check: "m5 12 4 4L19 6",
+  crosshair: "M12 3v4M12 17v4M3 12h4M17 12h4M17 12a5 5 0 1 1-10 0 5 5 0 0 1 10 0Z",
+  more: "M5 11v2M12 11v2M19 11v2",
+  copy: "M9 9h11v11H9ZM15 5V4H4v11h1",
+  link: "M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1",
+  image: "M4 5h16v14H4ZM4 16l5-5 4 4 2-2 5 5M15 9a1 1 0 1 0 2 0 1 1 0 0 0-2 0",
+  search: "M10.5 17a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13ZM15.5 15.5 20 20",
+  code: "m8 8-4 4 4 4M16 8l4 4-4 4M13.5 5l-3 14",
+  inspect: "M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5M10 10l7 3-3 1-1 3Z",
+  select: "M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4M9 9h6v6H9Z",
+  window: "M3 5h18v14H3ZM3 9h18",
+  private: "M3 13a3.5 3.5 0 1 0 7 0 3.5 3.5 0 0 0-7 0ZM14 13a3.5 3.5 0 1 0 7 0 3.5 3.5 0 0 0-7 0ZM10 13a2 2 0 0 1 4 0M3.5 11 5 6h2M20.5 11 19 6h-2",
+  container: "m12 4 9 5-9 5-9-5ZM3 14l9 5 9-5",
+  tab: "M3 20V9a1 1 0 0 1 1-1h5l1.5-3H20a1 1 0 0 1 1 1v14Z",
+  send: "M21 3 10 14M21 3l-7 18-4-7-7-4Z",
+  note: "M15 20H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v10ZM15 20v-5h5M8 9h8M8 13h4",
+  card: "M4 6h16v12H4ZM4 10h16M7 14h5",
+  split: "M3 5h18v14H3ZM12 5v14",
+  print: "M7 9V4h10v5M7 17H4v-7h16v7h-3M7 14h10v6H7Z",
+  translate: "M4 5h9M8.5 3v2M6 5c1 4 3 6 6 7M11 5c-1 4-3 6-6 8M13 20l4-9 4 9M14.5 17h5",
+  screenshot: "M7 3v14h14M3 7h14v14",
+  paste: "M9 4h6v3H9ZM9 5H6v16h12V5h-3",
+  cut: "M6 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM8.5 7.5 20 19M8.5 16.5 20 5",
+  undo: "M9 14 4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3",
+  redo: "m15 14 5-5-5-5M20 9H10a6 6 0 0 0 0 12h3",
+  trash: "M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3",
+  play: "M7 4v16l13-8Z",
+  pause: "M8 5v14M16 5v14",
+  mute: "M4 9h4l5-4v14l-5-4H4ZM17 9l4 6M21 9l-4 6",
+  pip: "M3 5h18v14H3ZM12 12h7v5h-7Z",
+  email: "M3 6h18v12H3ZM3 7l9 6 9-6",
+  reader: "M4 5c3 0 6 1 8 3 2-2 5-3 8-3v13c-3 0-6 1-8 3-2-2-5-3-8-3ZM12 8v13",
+  gear: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM19 12a7 7 0 0 0-.1-1.2l2-1.5-2-3.4-2.3.9a7 7 0 0 0-2.1-1.2L14 3h-4l-.5 2.6a7 7 0 0 0-2.1 1.2L5.1 5.9l-2 3.4 2 1.5a7 7 0 0 0 0 2.4l-2 1.5 2 3.4 2.3-.9a7 7 0 0 0 2.1 1.2L10 21h4l.5-2.6a7 7 0 0 0 2.1-1.2l2.3.9 2-3.4-2-1.5c.1-.4.1-.8.1-1.2Z",
+  puzzle: "M5.5 8H9a2 2 0 1 1 3.5 0h4v3.5a2 2 0 1 1 0 3.5V20h-11Z",
+  clock: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM12 7v5l3 2",
+  shield: "M12 3 5 6v6c0 4 3 7.5 7 9 4-1.5 7-5 7-9V6Z",
+  menu: "M4 7h16M4 12h16M4 17h16",
+  expand: "M15 4h5v5M20 4l-7 7M9 20H4v-5M4 20l7-7",
+  canvas: "M10 4h10v16H10M10 16v4M3 12h11m-3.5-3.5L14 12l-3.5 3.5",
+};
+
+// Ordered: specific Orbit and native Firefox identifiers before broad words.
+const GLYPH_RULES = [
+  [/^orbit-send-to-canvas$|^orbit-focus-canvas$/, "canvas"],
+  [/^orbit-canvas-page$/, "card"], [/^orbit-canvas-link$/, "link"], [/^orbit-canvas-selection$/, "note"],
+  [/^orbit-focus-(extension|manage-extensions)/, "puzzle"], [/^orbit-focus-bookmark/, "star"], [/^orbit-focus-history/, "clock"],
+  [/^orbit-focus-privacy$/, "shield"], [/^orbit-focus-(settings|preferences)$/, "gear"],
+  [/^orbit-focus-more-tools$/, "grid"], [/^orbit-focus-customize$/, "frame"],
+  [/^orbit-focus-browser-menu$/, "menu"], [/^orbit-focus-exit$/, "expand"],
+  [/^orbit-focus-tabs$/, "tab"], [/^orbit-focus-new-tab$/, "plus"], [/^orbit-focus-commands$/, "crosshair"],
+  [/^orbit-radial-current-tab$/, "tab"], [/^orbit-radial-new-tab$/, "plus"],
+  [/(?:^|-)back$/, "back"], [/forward$/, "forward"], [/reload$/, "reload"],
+  [/bookmark/, "star"], [/openlinkprivate|private/, "private"],
+  [/usercontext|container/, "container"], [/splitview/, "split"],
+  [/new-tab|openlinkintab|openlinkinnewtab/, "plus"], [/openlink$|newwindow/, "window"],
+  [/screenshot/, "screenshot"], [/save/, "download"], [/copyemail|email/, "email"],
+  [/copylink|copyimage$|copyurl|copy-link|stripOnShare|strip-on-share/i, "link"],
+  [/copy/, "copy"], [/cut$/, "cut"], [/paste/, "paste"], [/undo/, "undo"], [/redo/, "redo"],
+  [/delete/, "trash"], [/selectall/, "select"], [/searchselect|search/, "search"],
+  [/viewsource|source/, "code"], [/inspect/, "inspect"], [/pip|picture-?in-?picture/i, "pip"],
+  [/mute|unmute/, "mute"], [/pause/, "pause"], [/play|video|audio|media/, "play"],
+  [/image|background/, "image"], [/sendpage|sendlink|sendtab|send/, "send"],
+  [/print/, "print"], [/translate/, "translate"], [/reader/, "reader"],
+  [/frame/, "frame"], [/link/, "link"],
+];
+
+const GLYPH_TOKENS = {
+  "＋": "plus", "+": "plus", "←": "back", "→": "forward", "↻": "reload", "☆": "star",
+  "↓": "download", "↗": "external", "▤": "list", "▣": "frame", "▦": "grid", "◉": "target",
+  "✧": "sparkle", "✓": "check", "⌖": "crosshair", "•••": "more",
+};
+
+export function glyphName(node) {
+  const nativeID = String(node?.id || "");
+  for (const [pattern, name] of GLYPH_RULES) if (pattern.test(nativeID)) return name;
+  const token = GLYPH_TOKENS[iconText(node || {})];
+  if (token) return token;
+  return node?.children?.length ? "grid" : null;
+}
+
 function glyphPath(node) {
-  const paths = {
-    "＋": "M12 5v14M5 12h14", "+": "M12 5v14M5 12h14",
-    "←": "M19 12H5m6-6-6 6 6 6", "→": "M5 12h14m-6-6 6 6-6 6",
-    "↻": "M19 8a8 8 0 1 0 1 7M19 3v5h-5",
-    "☆": "m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9Z",
-    "↓": "M12 3v12m-5-5 5 5 5-5M4 17v4h16v-4",
-    "↗": "M8 5H4v15h15v-4M10 14 20 4m-7 0h7v7",
-    "▤": "M4 4h16v16H4ZM8 8h8M8 12h8M8 16h5",
-    "▣": "M4 4h16v16H4ZM8 8h8v8H8Z",
-    "▦": "M4 4h16v16H4ZM12 4v16M4 12h16",
-    "◉": "M20 12a8 8 0 1 1-16 0 8 8 0 0 1 16 0ZM15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z",
-    "✧": "m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5Z",
-    "✓": "m5 12 4 4L19 6",
-    "⌖": "M12 3v4M12 17v4M3 12h4M17 12h4M17 12a5 5 0 1 1-10 0 5 5 0 0 1 10 0Z",
-    "•••": "M5 11v2M12 11v2M19 11v2",
-  };
-  const explicit = paths[iconText(node)];
-  if (explicit) return explicit;
-  const nativeID = String(node.id || "");
-  const key = /(?:^|-)back$/.test(nativeID) ? "←" : /forward$/.test(nativeID) ? "→" :
-    /reload$/.test(nativeID) ? "↻" : /bookmark/.test(nativeID) ? "☆" :
-      /new-tab|openlinkintab/.test(nativeID) ? "＋" : /save/.test(nativeID) ? "↓" :
-        /send|openlink/.test(nativeID) ? "↗" : node.children?.length ? "▦" : null;
-  return paths[key] || null;
+  return GLYPHS[glyphName(node)] || null;
+}
+
+/** A tab's website initial is meaningful; it is drawn as a small site mark. */
+export function monogram(node) {
+  let site = "";
+  try {
+    const labels = new URL(String(node.description || "")).hostname.split(".").filter(Boolean);
+    // Name the site, not its subdomain: en.wikipedia.org -> W, bbc.co.uk -> B.
+    let index = labels.length - 2;
+    if (index > 0 && labels.at(-1).length === 2 && labels[index].length <= 3) index--;
+    site = labels[Math.max(0, index)] || "";
+  } catch {}
+  return [...(site || String(node.label || "•").trim())][0]?.toLocaleUpperCase() || "•";
+}
+
+/** Short, plain-text context for the hovered command's caption. */
+export function radialDetail(node) {
+  if (!node) return "";
+  if (node.kind === "tab" || node.kind === "info") {
+    const value = String(node.description || "");
+    try {
+      const url = new URL(value);
+      return (url.protocol === "http:" || url.protocol === "https:" ? url.host : `${url.protocol}${url.pathname}`).slice(0, 200);
+    } catch {
+      return value.slice(0, 200);
+    }
+  }
+  const children = node.children?.filter(child => child.kind !== "placeholder").length;
+  if (node.kind === "group") {
+    return `${children} ${children === 1 ? "tab" : "tabs"}${node.collapsed ? " · collapsed" : ""}`;
+  }
+  if (node.children?.length) return children ? `${children} ${children === 1 ? "option" : "options"}` : "Loading options…";
+  if (node.disabled) return "Unavailable here";
+  return "";
+}
+
+export function normalizedAccessKey(node) {
+  const key = typeof node?.accesskey === "string" ? node.accesskey.trim() : "";
+  return [...key].length === 1 ? key.toLocaleLowerCase() : "";
 }
 
 function shortLines(value, limit) {
@@ -222,6 +334,17 @@ export class OrbitRadialView {
     return svg;
   }
 
+  _monogram(parent, node, x, y, compact) {
+    const size = compact ? 14 : 19;
+    parent.append(this._svg("rect", {x: x - size / 2, y: y - size / 2, width: size, height: size,
+      rx: size * .32, class: "orbit-radial-monogram", "aria-hidden": "true"}));
+    const letter = this._svg("text", {x, y: y + (compact ? 3.5 : 4.2), class: "orbit-radial-monogram-label",
+      "text-anchor": "middle", "aria-hidden": "true"});
+    letter.textContent = monogram(node);
+    letter.style.setProperty("font-size", `${compact ? 9 : 11.5}px`);
+    parent.append(letter);
+  }
+
   _listen(node, event, callback, options) {
     node.addEventListener(event, callback, options);
     this.cleanups.push(() => node.removeEventListener(event, callback, options));
@@ -264,7 +387,10 @@ export class OrbitRadialView {
     this.caption.hidden = true;
     this.root.append(this.panel, this.caption);
     this.doc.documentElement.append(this.root);
-    this._listen(this.panel, "pointermove", event => this.updatePointer(event.screenX, event.screenY));
+    this._listen(this.panel, "pointermove", event => {
+      if (event.movementX || event.movementY) this._setKeyboardMode(false);
+      this.updatePointer(event.screenX, event.screenY);
+    });
     this._listen(this.panel, "pointerleave", () => {
       if (!this.model?.passthrough) this.win.clearTimeout(this.hoverTimer);
     });
@@ -293,7 +419,7 @@ export class OrbitRadialView {
     this.active = null;
     this.ringSignatures = [];
     this._mount();
-    this.root.classList.remove("orbit-radial-leaving");
+    this.root.classList.remove("orbit-radial-leaving", "orbit-radial-keyboard");
     this.root.classList.toggle("orbit-radial-held", model.passthrough === true);
     this.root.dataset.mode = model.mode || "context";
     this.root.classList.toggle("orbit-radial-morph", hadMenu);
@@ -391,6 +517,11 @@ export class OrbitRadialView {
       r: (geometry.rings[0]?.outer || geometry.centerRadius) + 7,
       class: "orbit-radial-disc", "pointer-events": "none"}));
     svg.append(backing);
+    this.localCenter = localCenter;
+    // A decorative arc on the hub's rim follows the hovered command, so the
+    // gesture direction stays visible even when a pointer covers its circle.
+    this.pointerArc = this._svg("path", {class: "orbit-radial-pointer", fill: "none",
+      "stroke-linecap": "round", "pointer-events": "none", "aria-hidden": "true"});
     const signatures = [];
     for (const [depth, nodes] of this.rings.entries()) {
       const ring = geometry.rings[depth];
@@ -454,16 +585,14 @@ export class OrbitRadialView {
         g.setAttribute("data-orbit-inner", ring.inner);
         g.setAttribute("data-orbit-outer", ring.outer);
         const compact = sector.targetRadius < 20;
+        const iconY = compact ? y : y - 14;
         const imageURL = safeImage(node.favicon || node.icon);
         if (imageURL && !compact) {
-          g.append(this._svg("image", {href: imageURL, x: x - 9, y: y - 23, width: 18, height: 18, class: "orbit-radial-icon-image"}));
+          g.append(this._svg("image", {href: imageURL, x: x - 9, y: iconY - 9, width: 18, height: 18, class: "orbit-radial-icon-image"}));
         } else if (sector.targetRadius > 6) {
-          const vector = this._icon(node, x, compact ? y : y - 15);
+          const vector = node.kind === "tab" && !node.checked ? null : this._icon(node, x, iconY);
           if (vector) g.append(vector);
-          else {
-            const icon = this._svg("text", {x, y: compact ? y + 4 : y - 7, class: "orbit-radial-icon", "text-anchor": "middle"});
-            icon.textContent = iconText(node); g.append(icon);
-          }
+          else this._monogram(g, node, x, iconY, compact);
         }
         if (!compact) {
           const limit = clamp(Math.floor((sector.targetRadius * 2 - 12) / 5.7), 4, 10);
@@ -473,12 +602,28 @@ export class OrbitRadialView {
           });
         }
         if (node.children?.length) {
-          const arrow = this._svg("text", {x: x + Math.cos(angle) * (sector.targetRadius - 5),
-            y: y + Math.sin(angle) * (sector.targetRadius - 5) + 3,
-            class: "orbit-radial-submenu-mark", "text-anchor": "middle"});
-          arrow.textContent = "·"; g.append(arrow);
+          // A small outward chevron on the rim says "more beyond this circle".
+          const ux = Math.cos(angle), uy = Math.sin(angle);
+          const tip = sector.targetRadius - 2.5, base = sector.targetRadius - 6;
+          g.append(this._svg("path", {class: "orbit-radial-submenu-mark", fill: "none",
+            "stroke-linecap": "round", "stroke-linejoin": "round",
+            d: `M ${x + ux * base - uy * 3.5} ${y + uy * base + ux * 3.5} L ${x + ux * tip} ${y + uy * tip} ` +
+              `L ${x + ux * base + uy * 3.5} ${y + uy * base - ux * 3.5}`}));
           g.setAttribute("aria-haspopup", "menu");
           g.setAttribute("aria-expanded", String(this.path[depth]?.id === node.id));
+        }
+        const accessKey = normalizedAccessKey(node);
+        if (accessKey && !compact) {
+          g.setAttribute("aria-keyshortcuts", accessKey.toLocaleUpperCase());
+          // Firefox's own menu access keys work here too. Their badges appear
+          // while the menu is being driven from the keyboard.
+          const kx = x + sector.targetRadius * .68, ky = y - sector.targetRadius * .68;
+          const badge = this._svg("g", {class: "orbit-radial-key", "aria-hidden": "true"});
+          badge.append(this._svg("circle", {cx: kx, cy: ky, r: 8, class: "orbit-radial-key-surface"}));
+          const letter = this._svg("text", {x: kx, y: ky + 3.5, class: "orbit-radial-key-label", "text-anchor": "middle"});
+          letter.textContent = accessKey.toLocaleUpperCase();
+          badge.append(letter);
+          g.append(badge);
         }
         const title = this._svg("title"); title.textContent = String(node.label || node.id); g.append(title);
         ringGroup.append(g);
@@ -486,6 +631,7 @@ export class OrbitRadialView {
       svg.append(ringGroup);
     }
     this.ringSignatures = signatures;
+    svg.append(this.pointerArc);
     const center = this._html("button", "orbit-radial-center");
     center.id = `${this.idPrefix}-center`;
     center.type = "button";
@@ -499,6 +645,12 @@ export class OrbitRadialView {
       this._html("span", "orbit-radial-center-icon", this.model.centerItem ? iconText(this.model.centerItem) : "◉");
     centerIcon.classList.add("orbit-radial-center-icon");
     center.append(centerIcon, this._html("span", "orbit-radial-center-label", this.model.centerItem?.label || "Orbit"));
+    if (this.model.centerItem?.kind === "info" && this.model.centerItem.description) {
+      // The tab wheel's hub names the tab you are leaving, as plain text.
+      center.classList.add("orbit-radial-center-info");
+      center.append(this._html("span", "orbit-radial-center-detail",
+        String(this.model.centerItem.description).slice(0, 160)));
+    }
     const caption = this._html("div", "orbit-radial-caption", this.path.length > 3 ? `DEPTH ${this.path.length + 1}` : this.menuCaption || (this.model.mode === "tabs" ? "YOUR OPEN TABS" : "PAGE ACTIONS"));
     caption.setAttribute("aria-hidden", "true");
     this.panel.replaceChildren(svg, center, caption);
@@ -586,15 +738,41 @@ export class OrbitRadialView {
         Number(sector.dataset.orbitDepth) === this.active?.depth);
     }
     this.panel.querySelector(".orbit-radial-center")?.classList.toggle("orbit-radial-active", this.active?.depth === -1);
+    this._paintPointer();
     if (this.caption) {
-      this.caption.textContent = this.active?.node?.label || "";
-      this.caption.hidden = !this.active?.node?.label;
+      const node = this.active?.node;
+      const title = this._html("span", "orbit-radial-command-title", node?.label || "");
+      const parts = [radialDetail(node)];
+      const key = normalizedAccessKey(node);
+      if (key && this.root?.classList.contains("orbit-radial-keyboard")) parts.push(`Press ${key.toLocaleUpperCase()}`);
+      const detail = parts.filter(Boolean).join(" · ");
+      const pill = this._html("span", "orbit-radial-command-pill");
+      pill.append(title);
+      if (detail) pill.append(this._html("span", "orbit-radial-command-detail", detail));
+      this.caption.replaceChildren(pill);
+      this.caption.hidden = !node?.label;
     }
     this.panel.setAttribute("aria-label", this.active?.node?.label ? `Orbit menu: ${this.active.node.label}` : "Orbit radial menu");
     if (this.active?.node) {
       this.panel.setAttribute("aria-activedescendant", this.active.depth === -1 ? `${this.idPrefix}-center` :
         `${this.idPrefix}-option-${this.active.depth}-${this.active.index}`);
     } else this.panel.removeAttribute("aria-activedescendant");
+  }
+
+  _paintPointer() {
+    const arc = this.pointerArc;
+    if (!arc || !this.geometry) return;
+    const sector = this.active?.depth >= 0 ? this.geometry.rings[this.active.depth]?.sectors[this.active.index] : null;
+    if (!sector) {
+      arc.classList.remove("orbit-radial-pointer-visible");
+      return;
+    }
+    const radius = this.geometry.centerRadius + 4.5;
+    const spread = Math.min(.42, Math.max(.2, (this.geometry.rings[this.active.depth].sectorAngle || .8) * .36));
+    const c = this.localCenter;
+    const point = angle => `${c + Math.cos(angle) * radius} ${c + Math.sin(angle) * radius}`;
+    arc.setAttribute("d", `M ${point(sector.angle - spread)} A ${radius} ${radius} 0 0 1 ${point(sector.angle + spread)}`);
+    arc.classList.add("orbit-radial-pointer-visible");
   }
 
   activateAt(screenX, screenY, event = null) {
@@ -619,6 +797,15 @@ export class OrbitRadialView {
     if (!this.model || !this.root || this.root.classList.contains("orbit-radial-leaving")) return;
     if (this.model.focus === false && !this.root.contains(this.doc.activeElement)) return;
     if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
+    if (!this.model.passthrough && !event.isComposing && [...String(event.key)].length === 1 && event.key !== " ") {
+      event.preventDefault(); event.stopPropagation();
+      this._setKeyboardMode(true);
+      this._accessKey(event);
+      return;
+    }
+    if (["Escape", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Enter", " ", "Home", "Tab"].includes(event.key)) {
+      this._setKeyboardMode(true);
+    }
     if (event.key === "Escape") {
       event.preventDefault(); event.stopPropagation();
       if (this.path.length) {
@@ -664,6 +851,87 @@ export class OrbitRadialView {
     this._emit("onHover", this.active?.node);
   }
 
+  _setKeyboardMode(enabled) {
+    if (!this.root || this.root.classList.contains("orbit-radial-keyboard") === enabled) return;
+    this.root.classList.toggle("orbit-radial-keyboard", enabled);
+    this._paintActive();
+  }
+
+  _highlight(node, depth, index) {
+    this.active = {node, depth, index};
+    this._paintActive();
+    this._emit("onHover", node);
+    // A lazy native submenu may have refreshed the model; use its live node.
+    return this.active?.node || node;
+  }
+
+  /** Firefox menu access keys keep working in the wheel. A unique key runs its
+   * command or opens its fan; shared keys cycle, like native menus. Without a
+   * key, typing a letter highlights the next matching label. */
+  _accessKey(event) {
+    const key = String(event.key).toLocaleLowerCase();
+    const deepest = this.rings.length - 1;
+    const current = this.active?.depth >= 0 ? this.active.depth : deepest;
+    const order = [current];
+    for (let depth = deepest; depth >= 0; depth--) if (depth !== current) order.push(depth);
+    for (const depth of order) {
+      const matches = (this.rings[depth] || []).map((node, index) => ({node, index}))
+        .filter(({node}) => !node.disabled && normalizedAccessKey(node) === key);
+      if (!matches.length) continue;
+      if (matches.length > 1) {
+        const at = matches.findIndex(match => this.active?.depth === depth && match.index === this.active.index);
+        const next = matches[(at + 1) % matches.length];
+        this._highlight(next.node, depth, next.index);
+        return;
+      }
+      this._runAccessKey(matches[0].node, depth, matches[0].index, event);
+      return;
+    }
+    // Commands paged behind a synthetic More circle keep their access keys.
+    for (const depth of order) {
+      const trail = this._findInMore(this.rings[depth] || [], key, depth);
+      if (!trail) continue;
+      this.path = [...this.path.slice(0, depth), ...trail.pages];
+      this._render();
+      const fan = this.rings.length - 1;
+      const index = this.rings[fan].findIndex(node => node.id === trail.node.id);
+      if (index >= 0) this._runAccessKey(this.rings[fan][index], fan, index, event);
+      return;
+    }
+    const nodes = this.rings[current] || [];
+    const start = this.active?.depth === current ? this.active.index : -1;
+    for (let step = 1; step <= nodes.length; step++) {
+      const index = (start + step) % nodes.length;
+      const node = nodes[index];
+      if (!node.disabled && String(visualLabel(node) || "").trim().toLocaleLowerCase().startsWith(key)) {
+        this._highlight(node, current, index);
+        return;
+      }
+    }
+  }
+
+  _runAccessKey(node, depth, index, event) {
+    const live = this._highlight(node, depth, index);
+    if (live.children?.length) {
+      this._activate(live);
+      const fan = this.rings.length - 1;
+      const first = this.rings[fan].findIndex(candidate => !candidate.disabled);
+      if (first >= 0) this._highlight(this.rings[fan][first], fan, first);
+    } else this._activate(live, event);
+  }
+
+  _findInMore(nodes, key, depth) {
+    for (const more of nodes) {
+      if (!more.orbitSynthetic || !more.children?.length) continue;
+      const page = pageRadialItems(more.children, depth + 1);
+      const node = page.find(candidate => !candidate.disabled && normalizedAccessKey(candidate) === key);
+      if (node) return {pages: [more], node};
+      const deeper = this._findInMore(page, key, depth + 1);
+      if (deeper) return {pages: [more, ...deeper.pages], node: deeper.node};
+    }
+    return null;
+  }
+
   hide(reason = "dismiss") {
     if (!this.root || this.root.classList.contains("orbit-radial-leaving")) return;
     this.win.clearTimeout(this.hoverTimer);
@@ -679,6 +947,7 @@ export class OrbitRadialView {
     this.root = null; this.panel = null; this.caption = null; this.model = null; this.geometry = null;
     this.path = []; this.rings = []; this.active = null;
     this.ringSignatures = [];
+    this.pointerArc = null; this.localCenter = 0;
   }
 
   destroy() {
