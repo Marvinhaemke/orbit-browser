@@ -14,6 +14,7 @@ import json
 from pathlib import Path
 import tempfile
 import threading
+import time
 import traceback
 from zipfile import ZipFile
 
@@ -741,6 +742,33 @@ def run_focus_checks(driver, handle, url, result, folder):
             rect.width > 300 && rect.height > 20 && rect.bottom >
                 document.getElementById("urlbar-container").getBoundingClientRect().bottom;
     '''), "The floating native address must retain its real top-layer suggestions outside the hidden toolbar"
+    # Open suggestions keep changing their rows. That must not re-measure the
+    # toolbar in a loop, which made the islands flash at their native toolbar
+    # positions while the address island stayed off center.
+    driver.execute_script('''
+        window.orbitMeasureRecords = 0;
+        window.orbitMeasureObserver?.disconnect();
+        window.orbitMeasureObserver = new MutationObserver(records => { window.orbitMeasureRecords += records.length; });
+        window.orbitMeasureObserver.observe(document.documentElement, {attributes: true, attributeFilter: ["data-orbit-focus-measuring"]});
+    ''')
+    time.sleep(1.5)
+    stability = driver.execute_script('''
+        window.orbitMeasureObserver.disconnect();
+        const container = document.getElementById("urlbar-container");
+        const box = container.getBoundingClientRect();
+        const controls = document.querySelector("[data-orbit-focus-window-controls='true']");
+        return {measurements: window.orbitMeasureRecords / 2, viewOpen: gURLBar.view.isOpen,
+            offCenter: Math.abs(box.x + box.width / 2 - window.innerWidth / 2),
+            opacity: getComputedStyle(container).opacity,
+            controlsShown: !!controls && getComputedStyle(controls).opacity !== "0"};
+    ''')
+    result["address_suggestion_layout"] = stability
+    assert stability["viewOpen"] and stability["measurements"] <= 1, \
+        f"Open address suggestions keep re-measuring the hidden toolbar: {stability}"
+    assert stability["offCenter"] <= 3 and stability["opacity"] == "1", \
+        f"The expanded address island is not centered and settled: {stability}"
+    assert not stability["controlsShown"], f"Window controls flashed into view while only the address was in use: {stability}"
+    checks.append("Open address suggestions leave the expanded island centered and settled, without re-measuring the toolbar or flashing the window controls")
     chord(driver, Keys.ESCAPE)
     wait_for(driver, "return !gURLBar.view.isOpen;", "Escape dismisses native address suggestions")
     assert focus_state(driver)["enabled"], "Closing autocomplete unexpectedly exited focus mode"

@@ -296,6 +296,14 @@
   --urlbar-background-border-radius: 20px;
 }
 
+/* updateFocusLayout() restores the native toolbar for one synchronous
+   measurement. The islands must not animate back from those native positions;
+   that animation is a flash at the wrong place. */
+:root[data-orbit-focus-settling="true"] :is(#urlbar-container[data-orbit-focus-address="true"],
+  .titlebar-buttonbox-container[data-orbit-focus-window-controls="true"]) {
+  transition: none !important;
+}
+
 /* The actual platform buttons form a second island. Their native commands,
    maximize/restore visibility and Windows snap-layout behavior stay intact. */
 :root[data-orbit-focus="true"]:not([data-orbit-focus-reveal="true"], [data-orbit-focus-measuring="true"])
