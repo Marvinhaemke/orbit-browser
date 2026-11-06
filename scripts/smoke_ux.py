@@ -884,9 +884,7 @@ def run_focus_checks(driver, handle, url, result, folder):
         return [...root.querySelectorAll(".orbit-radial-ring")].some(ring =>
             Number(ring.dataset.orbitDepth) > 0 && ring.classList.contains("orbit-radial-fan") &&
             Number(ring.dataset.orbitSpan) < Math.PI * 2 - .01);''', script_args=[TOOLS_ROOT_ID])
-    dismiss_tools(driver)
-    move_to_content(driver)
-    wait_focus_idle(driver)
+    # Measure the quarter while it is open, before Escape dismisses it.
     tools_shape = driver.execute_script('''const root = document.getElementById(arguments[0]);
         const center = root.querySelector(".orbit-radial-center").getBoundingClientRect();
         const circles = [...root.querySelectorAll(".orbit-radial-sector")].map(node => ({
@@ -898,6 +896,9 @@ def run_focus_checks(driver, handle, url, result, folder):
     result["tools_shape"] = tools_shape
     assert tools_shape["corner"] == "top-left" and tools_shape["hub"] == "orbit-focus-new-tab", tools_shape
     assert abs(tools_shape["centerLeft"]) < 1 and abs(tools_shape["centerTop"]) < 1 and tools_shape["onScreen"], tools_shape
+    dismiss_tools(driver)
+    move_to_content(driver)
+    wait_focus_idle(driver)
     checks.append("The top-left corner opens a quarter-circle tools radial whose hub is the corner itself, a slow continuous approach remains usable, settings fan from their parent on screen, and Escape preserves focus mode")
 
     open_tools(driver)
