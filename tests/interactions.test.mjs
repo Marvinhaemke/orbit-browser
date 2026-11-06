@@ -113,10 +113,17 @@ globalThis.ChromeUtils = {
   },
 };
 const prefs = new Map();
+const prefObservers = new Map();
 globalThis.Services = { appinfo: { OS: "WINNT" }, prefs: {
   getBoolPref: (name, fallback) => prefs.has(name) ? prefs.get(name) : fallback,
   setBoolPref: (name, value) => prefs.set(name, value),
+  addObserver(name, observer) {
+    if (!prefObservers.has(name)) prefObservers.set(name, new Set());
+    prefObservers.get(name).add(observer);
+  },
+  removeObserver(name, observer) { prefObservers.get(name)?.delete(observer); },
 } };
+const notifyPref = name => { for (const observer of [...(prefObservers.get(name) || [])]) observer.observe(null, "nsPref:changed", name); };
 const { InteractionWindow, OrbitInteractions, searchCommands, FOCUS_DEFAULT_PREF, focusModeDefault } =
   await import("../overlay/browser/components/orbit/OrbitInteractions.sys.mjs");
 
@@ -528,10 +535,33 @@ test("native window controls retain their DOM owner and focus markers restore wi
   const container = win.document.getElementById("urlbar-container");
   assert.equal(container.getAttribute("data-orbit-focus-address"), "true"); assert.equal(container.parentNode, navigation);
   let layouts = 0; const update = state.updateFocusLayout.bind(state); state.updateFocusLayout = () => { layouts++; update(); };
-  win.observer.callback([{ attributeName: "data-orbit-focus-address-visible" }]); assert.equal(layouts, 0);
+  win.observer.callback([{ attributeName: "data-orbit-focus-address-visible" }]); win.advance(0); assert.equal(layouts, 0);
+  // Open address suggestions change classes on every update, and each
+  // measurement resizes them. Watching those looped and kept the islands
+  // flashing at their native toolbar positions.
+  const suggestion = new Node(win.document); win.document.getElementById("urlbar").append(suggestion);
+  win.observer.notifyMutation(suggestion, "class"); win.observer.notifyMutation(container, "class");
+  win.observer.notifyMutation(navigation, "class"); win.advance(0);
+  assert.equal(layouts, 0, "Layout-driven class changes must never re-measure the toolbar");
   box.computedStyle = { visibility: "hidden", display: "none" };
-  win.observer.notifyMutation(box, "collapsed"); assert.equal(layouts, 1, "Native titlebar ownership changes inside the toolbox must update the island");
+  win.observer.notifyMutation(win.document.getElementById("navigator-toolbox"), "tabs-hidden");
+  win.observer.notifyMutation(navigation, "collapsed");
+  assert.equal(layouts, 0, "Titlebar changes wait for the next frame");
+  win.advance(0); assert.equal(layouts, 1, "Native titlebar ownership changes update the island once per frame");
   assert.notEqual(box.getAttribute("data-orbit-focus-window-controls"), "true");
+  notifyPref("sidebar.verticalTabs"); win.advance(0); assert.equal(layouts, 2, "Switching to vertical tabs re-measures the titlebar");
+  // The restored focus layout is applied while transitions are still off.
+  const root = win.document.documentElement; const flushes = [];
+  container.getBoundingClientRect = () => {
+    flushes.push({ settling: root.hasAttribute("data-orbit-focus-settling"), measuring: root.hasAttribute("data-orbit-focus-measuring") });
+    return { width: 440, height: 52 };
+  };
+  state.updateFocusLayout();
+  assert.deepEqual(flushes, [{ settling: true, measuring: false }]);
+  assert.equal(root.hasAttribute("data-orbit-focus-settling"), false, "Transitions return after the islands are back in place");
+  win.observer.notifyMutation(navigation, "hidden"); state.setFocusMode(false); win.advance(0);
+  assert.equal(layouts, 3, "Leaving focus mode cancels a pending measurement");
+  state.setFocusMode(true); layouts = 0;
   state.setFocusMode(false); assert.equal(box.getAttribute("data-orbit-focus-window-controls"), "previous");
   assert.equal(container.hasAttribute("data-orbit-focus-address"), false);
   state.destroy(); assert.equal(win.observer.disconnected, true);

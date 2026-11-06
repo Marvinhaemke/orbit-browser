@@ -279,10 +279,34 @@ class OrbitWindow {
         if (this.peekPanel) {
           event.preventDefault();
           this.closePeek();
-        } else if (this.overlay && !this.overlay.hidden) {
+        } else if (this.overlay && !this.overlay.hidden && !this.addressInUse()) {
+          // While the address bar is in use over the canvas, Escape belongs to
+          // Firefox: it closes suggestions and reverts the edit first.
           event.preventDefault();
           this.hide();
         }
+      }
+    }, true);
+    // An overlay canvas stays in front while the person types in Firefox's
+    // address bar, however they reached it (the canvas field or Ctrl+L). Once
+    // the address bar starts a navigation, the canvas steps aside so the page
+    // it opens is visible.
+    const addressNavigation = {
+      observe: () => {
+        if (this.overlay && !this.overlay.hidden &&
+            (this.win.gURLBar?.focused || Services.focus?.activeWindow === this.win)) {
+          this.hide();
+        }
+      },
+    };
+    Services.obs.addObserver(addressNavigation, "urlbar-user-start-navigation");
+    this.cleanups.push(() => Services.obs.removeObserver(addressNavigation, "urlbar-user-start-navigation"));
+    // The page beneath a visible overlay never takes the keyboard: when Firefox
+    // returns focus to it (after Escape in the address bar, for example), the
+    // visible canvas receives that focus instead.
+    this.listen(win, "focus", event => {
+      if (this.overlay && !this.overlay.hidden && event.target === this.win.gBrowser.selectedBrowser) {
+        this.frame?.focus();
       }
     }, true);
     this.listen(win, "unload", () => this.destroy(), { once: true });
@@ -688,13 +712,18 @@ class OrbitWindow {
     return true;
   }
 
+  addressInUse() {
+    const urlbar = this.win.gURLBar;
+    return !!(urlbar?.focused || urlbar?.view?.isOpen);
+  }
+
   /** Hand typed text to Firefox's real address bar, which owns search
    * engines, suggestions, URL fixup and Enter. The canvas never navigates
-   * from typed text itself. */
+   * from typed text itself. An overlay canvas stays visible, as with Ctrl+L,
+   * until the address bar starts a navigation. */
   focusAddress(value = "") {
     text(value, 2048, "address text");
     const query = value.replace(/[\u0000-\u001f\u007f]/g, " ");
-    this.hide();
     const urlbar = this.win.gURLBar;
     if (!urlbar) {
       throw new Error("Firefox's address bar is unavailable in this window");

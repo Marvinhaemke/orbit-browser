@@ -13,6 +13,7 @@ const HTML_NS = "http://www.w3.org/1999/xhtml";
 const windows = new WeakMap();
 let widgetCreated = false;
 export const FOCUS_DEFAULT_PREF = "browser.orbit.focus.default";
+const VERTICAL_TABS_PREF = "sidebar.verticalTabs";
 
 /** Focus mode is Orbit's default presentation. The person can switch new
  * windows back to the full toolbar from Orbit commands or about:config. */
@@ -64,21 +65,33 @@ export class InteractionWindow {
     this.listen(win, "beforecustomization", () => this.setFocusMode(false));
     this.listen(win, "blur", () => this.onWindowBlur());
     this.listen(win, "focus", () => this.onWindowFocus());
-    this.listen(win, "resize", () => this.updateFocusLayout());
+    this.layoutFrame = null;
+    this.listen(win, "resize", () => this.scheduleFocusLayout());
     // Firefox can move the native window buttons to the navigation row when
     // switching to vertical tabs. Preserve whichever row actually owns them.
+    // Watch only the attributes Firefox's titlebar-button rules depend on, on
+    // the nodes that carry them. Each measurement briefly restores the native
+    // toolbar, so watching anything that layout itself changes (classes in
+    // the address bar's suggestions, toolbar overflow) would loop and keep the
+    // islands flashing at their native positions.
     this.layoutObserver = new win.MutationObserver(records => {
-      if (records.some(record => record.attributeName && !record.attributeName.startsWith("data-orbit-"))) this.updateFocusLayout();
+      if (records.some(record => record.attributeName && !record.attributeName.startsWith("data-orbit-"))) this.scheduleFocusLayout();
     });
-    this.layoutObserver.observe(this.root, { attributes: true });
+    this.layoutObserver.observe(this.root, {
+      attributes: true,
+      attributeFilter: ["customtitlebar", "tabsintitlebar", "inFullscreen", "sizemode", "taskbartab", "popup-window", "mini-window"],
+    });
     const toolbox = this.doc.getElementById("navigator-toolbox");
     if (toolbox) {
-      // Vertical-tab layout changes native titlebar ownership on the toolbox
-      // and toolbar nodes, without necessarily changing a root attribute.
-      this.layoutObserver.observe(toolbox, {
-        attributes: true, subtree: true,
-        attributeFilter: ["tabs-hidden", "collapsed", "autohide", "inactive", "class"],
-      });
+      this.layoutObserver.observe(toolbox, { attributes: true, attributeFilter: ["tabs-hidden"] });
+      for (const id of ["toolbar-menubar", "TabsToolbar", "nav-bar"]) {
+        const toolbar = this.doc.getElementById(id);
+        if (toolbar) this.layoutObserver.observe(toolbar, { attributes: true, attributeFilter: ["autohide", "inactive", "collapsed", "hidden"] });
+      }
+      // Firefox's titlebar rules also follow the vertical-tabs preference.
+      const verticalTabs = { observe: () => this.scheduleFocusLayout() };
+      Services.prefs.addObserver(VERTICAL_TABS_PREF, verticalTabs);
+      this.cleanups.push(() => Services.prefs.removeObserver(VERTICAL_TABS_PREF, verticalTabs));
       this.listen(toolbox, "focusin", event => {
         if (this.searchFallback?.contains(event.target)) this.showIsland("address", true);
       });
@@ -525,16 +538,43 @@ export class InteractionWindow {
       this.updateFocusLayout();
       if (keepAddress) this.showIsland("address", true);
     } else {
+      this.cancelFocusLayout();
       this.restoreFocusMarkers();
-      for (const attr of ["data-orbit-focus-reveal", "data-orbit-focus-nav-titlebar", "data-orbit-focus-native-titlebar", "data-orbit-focus-measuring"]) {
+      for (const attr of ["data-orbit-focus-reveal", "data-orbit-focus-nav-titlebar", "data-orbit-focus-native-titlebar",
+        "data-orbit-focus-measuring", "data-orbit-focus-settling"]) {
         this.root.removeAttribute(attr);
       }
     }
     if (!this.palette.hidden) this.update();
   }
 
+  /** Coalesces layout changes (window resizing, titlebar attribute bursts)
+   * into one measurement per frame. */
+  scheduleFocusLayout() {
+    if (!this.focusMode || this.disposed || this.layoutFrame) return;
+    const run = () => {
+      this.layoutFrame = null;
+      this.updateFocusLayout();
+    };
+    this.layoutFrame = typeof this.win.requestAnimationFrame === "function"
+      ? { frame: this.win.requestAnimationFrame(run) }
+      : { timer: this.win.setTimeout(run, 0) };
+  }
+
+  cancelFocusLayout() {
+    if (!this.layoutFrame) return;
+    if ("frame" in this.layoutFrame) this.win.cancelAnimationFrame(this.layoutFrame.frame);
+    else this.win.clearTimeout(this.layoutFrame.timer);
+    this.layoutFrame = null;
+  }
+
   updateFocusLayout() {
     if (!this.focusMode || this.disposed) return;
+    this.cancelFocusLayout();
+    // Measuring restores the native toolbar for a moment. Keep the islands'
+    // transitions off across that switch: otherwise they animate back from
+    // their native toolbar positions, flashing into view at the wrong place.
+    this.root.setAttribute("data-orbit-focus-settling", "true");
     this.root.setAttribute("data-orbit-focus-measuring", "true");
     try {
       const address = this.addressNode();
@@ -590,6 +630,11 @@ export class InteractionWindow {
       if (nativeTitlebar) this.root.setAttribute("data-orbit-focus-native-titlebar", "true");
     } finally {
       this.root.removeAttribute("data-orbit-focus-measuring");
+      // Lay out the restored islands while transitions are still off, so
+      // re-enabling them animates nothing.
+      this.addressNode()?.getBoundingClientRect();
+      this.windowControls?.getBoundingClientRect();
+      this.root.removeAttribute("data-orbit-focus-settling");
     }
   }
 
@@ -743,6 +788,7 @@ export class InteractionWindow {
     this.close(false);
     this.setFocusMode(false);
     this.disposed = true;
+    this.cancelFocusLayout();
     this.layoutObserver.disconnect();
     for (const cleanup of this.cleanups.splice(0)) cleanup();
     this.focusTools?.destroy();
