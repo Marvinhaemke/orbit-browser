@@ -290,7 +290,7 @@ test("new tab command leaves native address-field focus intact", () => {
 test("focus mode is reversible, restores controls and reveals before Ctrl+L", () => {
   const win = createWindow(); const state = new InteractionWindow(win); win.gURLBar.select();
   state.keydown(key("F", { altKey: true, shiftKey: true }));
-  assert.equal(state.focusMode, true); assert.equal(state.chip.hidden, false);
+  assert.equal(state.focusMode, true); assert.equal(win.document.getElementById("orbit-focus-chip"), null, "focus mode adds no permanent buttons");
   assert.equal(win.document.activeElement, win.gBrowser.selectedBrowser);
   assert.equal(state.root.getAttribute("data-orbit-focus"), "true");
   const revealKey = key("l", { ctrlKey: true }); state.keydown(revealKey);
@@ -298,7 +298,7 @@ test("focus mode is reversible, restores controls and reveals before Ctrl+L", ()
   assert.equal(state.root.getAttribute("data-orbit-focus-address-expanded"), "true");
   win.gURLBar.select(); state.scheduleConceal(); win.flushTimers(); assert.equal(state.revealed, true);
   win.gBrowser.selectedBrowser.focus(); state.scheduleConceal(); win.flushTimers(); assert.equal(state.revealed, false);
-  state.keydown(key("Escape")); assert.equal(state.focusMode, false); assert.equal(state.chip.hidden, true);
+  state.keydown(key("Escape")); assert.equal(state.focusMode, false); assert.equal(state.toolsHotzone.hidden, true);
   assert.equal(state.root.hasAttribute("data-orbit-focus"), false); state.destroy();
 });
 function islandVisible(state, island) {
@@ -590,7 +590,7 @@ test("destroy removes window/tab listeners, pending conceal and injected UI", ()
   assert.equal(win.listenerCount(), 0); assert.equal(win.gBrowser.tabContainer.listenerCount(), 0);
   assert.equal(win.document.getElementById("navigator-toolbox").listenerCount(), 0);
   assert.equal(win.document.getElementById("urlbar-container").listenerCount(), 0);
-  assert.equal(win.timers.size, 0); assert.equal(state.palette.isConnected, false); assert.equal(state.chip.isConnected, false);
+  assert.equal(win.timers.size, 0); assert.equal(state.palette.isConnected, false);
   for (const island of ["address", "tools", "window"]) {
     assert.equal(state[`${island}Hotzone`].isConnected, false);
     assert.equal(islandVisible(state, island), false);
@@ -617,7 +617,7 @@ test("new windows open in focus mode by default and keep Firefox's initial addre
   OrbitInteractions.init(win);
   const root = win.document.documentElement;
   assert.equal(root.getAttribute("data-orbit-focus"), "true");
-  assert.equal(win.document.getElementById("orbit-focus-chip").hidden, false);
+  assert.equal(win.document.getElementById("orbit-focus-tools-hotzone").hidden, false, "the corner hotzone is armed");
   assert.equal(win.document.activeElement, win.gURLBar.inputField, "default focus mode must not steal the new-tab address focus");
   assert.equal(root.getAttribute("data-orbit-focus-address-visible"), "true");
   assert.equal(root.getAttribute("data-orbit-focus-address-expanded"), "true");
@@ -668,4 +668,14 @@ test("the tools menu New tab command reveals the real address field before Firef
   };
   state.focusTools.callbacks.onNewTab();
   assert.equal(win.document.activeElement, win.gURLBar.inputField); state.destroy();
+});
+test("Orbit commands open the corner tools menu from the keyboard only in focus mode", () => {
+  const win = createWindow(); const state = new InteractionWindow(win);
+  state.open(); state.input.value = "browser tools"; state.update();
+  assert.equal(state.results.some(command => command.id === "action:tools"), false);
+  state.close(); state.setFocusMode(true);
+  state.open(); state.input.value = "browser tools"; state.update();
+  assert.equal(state.results[0]?.id, "action:tools"); state.keydown(key("Enter"));
+  assert.equal(state.focusTools.visible, true); assert.equal(islandVisible(state, "tools"), true);
+  state.destroy();
 });

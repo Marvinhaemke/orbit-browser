@@ -108,7 +108,7 @@ export class InteractionWindow {
     }
     this.listen(win, "mousedown", event => {
       if (event.isTrusted && this.focusMode && !this.addressNode()?.contains(event.target) &&
-          !this.palette.contains(event.target) && !this.chip.contains(event.target) &&
+          !this.palette.contains(event.target) &&
           !this.focusTools?.contains(event.target) && !this.windowControls?.contains(event.target)) {
         for (const island of Object.keys(this.islands)) this.scheduleConceal(island);
       }
@@ -191,24 +191,9 @@ export class InteractionWindow {
     this.listen(this.palette, "mousedown", event => {
       if (event.isTrusted && event.target === this.palette) this.close();
     });
-    this.chip = this.node("div", "orbit-focus-chip");
-    this.chip.hidden = true;
-    this.chip.setAttribute("role", "group");
-    this.chip.setAttribute("aria-label", "Focus mode controls");
-    const reveal = this.node("button", "orbit-focus-reveal", null, "Address bar");
-    reveal.type = "button";
-    reveal.title = `Show the address bar (${Services.appinfo.OS === "Darwin" ? "⌘" : "Ctrl+"}L)`;
-    const exit = this.node("button", "orbit-focus-exit", null, "Exit focus");
-    exit.type = "button";
-    exit.title = "Exit focus mode (Escape or Alt+Shift+F)";
-    this.listen(reveal, "click", event => {
-      if (!event.isTrusted) return;
-      this.reveal(true, true);
-      this.win.gURLBar?.select();
-    });
-    this.listen(exit, "click", event => { if (event.isTrusted) this.setFocusMode(false); });
-    this.chip.append(reveal, exit);
-    this.root.append(this.palette, this.chip);
+    // Focus mode has no permanent on-screen buttons: Escape, Alt+Shift+F and
+    // the corner tools menu's Exit focus restore the full interface.
+    this.root.append(this.palette);
     for (const island of Object.keys(this.islands)) {
       const zone = this.node("div", `orbit-focus-${island}-hotzone`, "orbit-focus-hotzone");
       zone.hidden = true;
@@ -233,6 +218,12 @@ export class InteractionWindow {
           run: () => { setFocusModeDefault(true); this.setFocusMode(true); } },
       { id: "action:new-tab", kind: "command", label: "New tab", detail: "Open a fresh canvas tab · Ctrl+T", run: () => this.openNewTab() },
     ];
+    if (this.focusMode) {
+      // The keyboard route to the corner menu, which has no permanent button.
+      commands.push({ id: "action:tools", kind: "command", label: "Browser tools",
+        detail: "Extensions, bookmarks, history, downloads and settings · top-left corner",
+        keywords: "menu extensions bookmarks history downloads settings corner", run: () => this.openTools() });
+    }
     for (const tab of this.win.gBrowser.openTabs || this.win.gBrowser.tabs) {
       if (tab.closing || !this.win.gBrowser.getTabForBrowser(tab.linkedBrowser)) continue;
       if (!this.tabIDs.has(tab)) this.tabIDs.set(tab, ++this.serial);
@@ -256,6 +247,11 @@ export class InteractionWindow {
         run: () => lazy.Orbit.openFrame(this.win, frame.id) });
     }
     return commands;
+  }
+
+  openTools() {
+    if (!this.focusMode || this.disposed) return;
+    this.showIsland("tools", false, true);
   }
 
   /** Firefox's own New Tab command focuses the address field, so reveal the
@@ -297,8 +293,7 @@ export class InteractionWindow {
       const concealedNative = this.focusMode && this.doc.getElementById("navigator-toolbox")?.contains(this.previousFocus) &&
         !this.addressNode()?.contains(this.previousFocus) && !this.searchFallback?.contains(this.previousFocus) &&
         !this.windowControls?.contains(this.previousFocus);
-      if (this.previousFocus?.isConnected && !concealedNative && !this.palette.contains(this.previousFocus) &&
-          !(this.chip.hidden && this.chip.contains(this.previousFocus))) this.previousFocus.focus();
+      if (this.previousFocus?.isConnected && !concealedNative && !this.palette.contains(this.previousFocus)) this.previousFocus.focus();
       else this.win.gBrowser.selectedBrowser.focus();
     }
     this.previousFocus = null;
@@ -511,14 +506,13 @@ export class InteractionWindow {
     const keepAddress = enabled && preserveAddress && this.palette.hidden &&
       !!this.addressNode()?.contains(this.doc.activeElement);
     if (!keepAddress && this.palette.hidden &&
-        (toolbox?.contains(this.doc.activeElement) || this.chip.contains(this.doc.activeElement))) {
+        toolbox?.contains(this.doc.activeElement)) {
       this.win.gBrowser.selectedBrowser.focus();
     }
     this.focusMode = enabled;
     this.root.toggleAttribute("data-orbit-focus", enabled);
     if (enabled) this.root.setAttribute("data-orbit-focus", "true");
     this.focusTools?.setEnabled?.(enabled);
-    this.chip.hidden = !enabled;
     for (const island of Object.keys(this.islands)) {
       this[`${island}Hotzone`].hidden = !enabled;
       this.islands[island].hovered = false;
@@ -628,13 +622,13 @@ export class InteractionWindow {
     this.scheduleConceal(island);
   }
 
-  showIsland(island, expanded = false) {
+  showIsland(island, expanded = false, focus = false) {
     if (!this.focusMode || this.disposed) return;
     this.cancelIslandTimer(island, "conceal");
     const state = this.islands[island];
     if (island === "tools") {
       this.ensureFocusTools();
-      this.focusTools.open();
+      this.focusTools.open({ focus });
       state.visible = this.focusTools.visible;
     } else state.visible = true;
     this.root.toggleAttribute(`data-orbit-focus-${island}-visible`, state.visible);
@@ -748,7 +742,7 @@ export class InteractionWindow {
       this.cancelIslandTimer(island, "conceal");
       this[`${island}Hotzone`].remove();
     }
-    this.palette.remove(); this.chip.remove(); this.sheet.remove();
+    this.palette.remove(); this.sheet.remove();
     this.results = [];
   }
 }

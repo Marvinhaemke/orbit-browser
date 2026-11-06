@@ -66,6 +66,7 @@ def transform(path: str, original: str, root: Path = ROOT) -> str:
     if path == "browser/components/BrowserComponents.manifest":
         return original + (
             "\n# Orbit native browser-window integration\n"
+            "category browser-before-ui-startup moz-src:///browser/components/orbit/Orbit.sys.mjs Orbit.beforeUIStartup\n"
             "category browser-window-delayed-startup moz-src:///browser/components/orbit/Orbit.sys.mjs Orbit.init\n"
             "category browser-window-unload-delayed-startup moz-src:///browser/components/orbit/Orbit.sys.mjs Orbit.uninit\n"
         )
@@ -112,6 +113,10 @@ def transform(path: str, original: str, root: Path = ROOT) -> str:
             'pref("browser.startup.page", 3);\n'
             "// New browser windows open in Orbit focus mode; Orbit commands can change this.\n"
             'pref("browser.orbit.focus.default", true);\n'
+            "// The Orbit canvas is the home page and new-window page. Settings can change it.\n"
+            'pref("browser.startup.homepage", "chrome://browser/content/orbit/orbit.html");\n'
+            "// First run opens the canvas rather than Firefox's onboarding tab.\n"
+            'pref("browser.aboutwelcome.enabled", false);\n'
         )
     raise ValueError(f"No reviewed transform for {path}")
 

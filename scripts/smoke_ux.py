@@ -27,7 +27,7 @@ from smoke_radial import (
     dismiss, find_action, hover_node, left_click, page_menu, pointer, radial_state,
     select_fixture, settle_radial, wait_for,
 )
-from smoke_test import canvas_shortcut, chord, native_canvas_ready, new_handle, open_canvas
+from smoke_test import CANVAS_URI, canvas_shortcut, chord, native_canvas_ready, new_handle, open_canvas
 
 TOOLS_ROOT_ID = "orbit-focus-tools-root"
 EXTENSION_ID = "orbit-focus-smoke@orbit.invalid"
@@ -119,7 +119,6 @@ def focus_state(driver):
     return driver.execute_script('''
         const root = document.documentElement;
         const toolbox = document.getElementById("navigator-toolbox");
-        const chip = document.getElementById("orbit-focus-chip");
         const address = document.getElementById("urlbar-container");
         const tabs = document.getElementById("tabbrowser-tabs");
         const geometry = node => {
@@ -131,7 +130,6 @@ def focus_state(driver):
                 shadow: style?.boxShadow, radius: style?.borderRadius};
         };
         const box = geometry(toolbox);
-        const chipBox = geometry(chip);
         const controls = [...document.querySelectorAll('[data-orbit-focus-window-controls="true"]')];
         const tools = document.getElementById(arguments[0]);
         return {enabled: root.getAttribute("data-orbit-focus") === "true",
@@ -139,7 +137,8 @@ def focus_state(driver):
             addressExpanded: root.getAttribute("data-orbit-focus-address-expanded") === "true",
             windowVisible: root.getAttribute("data-orbit-focus-window-visible") === "true",
             toolsVisible: root.getAttribute("data-orbit-focus-tools-visible") === "true",
-            chipVisible: !chip.hidden && chipBox.width > 0 && chipBox.height > 0,
+            permanentButtons: !!document.getElementById("orbit-focus-chip") ||
+                !!document.getElementById("orbit-focus-tools-trigger"),
             toolboxTop: box.y, toolboxBottom: box.bottom,
             viewport: {width: innerWidth, height: innerHeight},
             address: geometry(address), windowControls: controls.map(geometry),
@@ -436,6 +435,14 @@ def hover_focus_zone(driver, zone):
     return focus_state(driver)
 
 
+def exit_focus(driver):
+    """Focus mode has no on-screen exit button; use its native shortcut."""
+    driver.set_context("chrome")
+    chord(driver, Keys.ALT, Keys.SHIFT, "f")
+    wait_for(driver, 'return !document.documentElement.hasAttribute("data-orbit-focus");',
+             "Alt+Shift+F restores the full browser interface")
+
+
 def move_to_content(driver, click=False):
     driver.set_context("chrome")
     point = driver.execute_script('return {x: Math.round(innerWidth / 2), y: Math.round(innerHeight * .68)};')
@@ -457,7 +464,7 @@ def wait_focus_idle(driver):
 
 
 def assert_focus_geometry(state, compact=None):
-    assert state["enabled"] and state["addressMarked"] and state["chipVisible"], state
+    assert state["enabled"] and state["addressMarked"] and not state["permanentButtons"], state
     assert state["tabVisibility"] == "hidden", state
     if state["addressVisible"]:
         box = state["address"]
@@ -658,7 +665,7 @@ def run_focus_checks(driver, handle, url, result, folder):
     ''')
     chord(driver, Keys.ALT, Keys.SHIFT, "f")
     wait_for(driver, '''return document.documentElement.getAttribute("data-orbit-focus") === "true" &&
-        !document.getElementById("orbit-focus-chip").hidden;''', "trusted focus shortcut enables a visible escape control")
+        !document.getElementById("orbit-focus-tools-hotzone").hidden;''', "trusted focus shortcut arms the corner tools sensor")
     move_to_content(driver, click=True)
     wait_focus_idle(driver)
     idle = focus_state(driver)
@@ -880,7 +887,18 @@ def run_focus_checks(driver, handle, url, result, folder):
     dismiss_tools(driver)
     move_to_content(driver)
     wait_focus_idle(driver)
-    checks.append("Top-left dwell opens a separate circular tools radial, a slow continuous corner-to-menu approach remains usable, settings fan from their parent, and Escape preserves focus mode")
+    tools_shape = driver.execute_script('''const root = document.getElementById(arguments[0]);
+        const center = root.querySelector(".orbit-radial-center").getBoundingClientRect();
+        const circles = [...root.querySelectorAll(".orbit-radial-sector")].map(node => ({
+            x: Number(node.dataset.orbitX), y: Number(node.dataset.orbitY), r: Number(node.dataset.orbitRadius)}));
+        return {corner: root.dataset.corner, centerLeft: center.left, centerTop: center.top,
+            hub: root.querySelector(".orbit-radial-center").dataset.orbitId,
+            onScreen: circles.every(c => c.x - c.r >= 0 && c.y - c.r >= 0 && c.x + c.r <= innerWidth && c.y + c.r <= innerHeight)};''',
+        script_args=[TOOLS_ROOT_ID])
+    result["tools_shape"] = tools_shape
+    assert tools_shape["corner"] == "top-left" and tools_shape["hub"] == "orbit-focus-new-tab", tools_shape
+    assert abs(tools_shape["centerLeft"]) < 1 and abs(tools_shape["centerTop"]) < 1 and tools_shape["onScreen"], tools_shape
+    checks.append("The top-left corner opens a quarter-circle tools radial whose hub is the corner itself, a slow continuous approach remains usable, settings fan from their parent on screen, and Escape preserves focus mode")
 
     open_tools(driver)
     activate_tool(driver, "orbit-focus-downloads")
@@ -983,7 +1001,7 @@ def run_focus_checks(driver, handle, url, result, folder):
 
     chord(driver, Keys.ESCAPE)
     wait_for(driver, 'return !document.documentElement.hasAttribute("data-orbit-focus");', "Escape exits idle focus mode")
-    assert not focus_state(driver)["chipVisible"] and focus_state(driver)["addressVisibility"] == "visible"
+    assert focus_state(driver)["addressVisibility"] == "visible"
     assert driver.execute_script('''return document.getElementById("urlbar-container") === window.orbitUXNativeAddress &&
         window.orbitUXNativeWindowBoxes.every(({node, parent, next}) =>
             node.isConnected && node.parentNode === parent && node.nextSibling === next) &&
@@ -993,13 +1011,26 @@ def run_focus_checks(driver, handle, url, result, folder):
     chord(driver, Keys.ALT, Keys.SHIFT, "f")
     move_to_content(driver, click=True)
     wait_focus_idle(driver)
-    left_click(driver, "orbit-focus-reveal")
-    wait_for(driver, '''return gURLBar.focused &&
+    previous = set(driver.window_handles)
+    open_tools(driver)
+    hover_tool(driver, "orbit-focus-new-tab")
+    pointer(driver).click().perform()
+    new_handle(driver, previous, "The corner menu's New tab hub")
+    driver.set_context("chrome")
+    wait_for(driver, '''return gBrowser.selectedBrowser.currentURI.spec === arguments[0] && gURLBar.focused &&
         document.documentElement.getAttribute("data-orbit-focus-address-expanded") === "true";''',
-             "the visible focus chip expands the address island")
-    left_click(driver, "orbit-focus-exit")
-    wait_for(driver, 'return !document.documentElement.hasAttribute("data-orbit-focus");', "focus chip exits focus mode")
-    checks.append("The visible Address bar and Exit focus chip buttons remain physically reachable and restore native browser focus")
+             "the corner hub opens a canvas tab with the real address bar ready", [CANVAS_URI])
+    assert focus_state(driver)["enabled"] and not tools_state(driver)["visible"]
+    chord(driver, Keys.CONTROL, "w")
+    select_fixture(driver, handle)
+    driver.set_context("chrome")
+    move_to_content(driver, click=True)
+    wait_focus_idle(driver)
+    open_tools(driver)
+    activate_tool(driver, "orbit-focus-exit")
+    wait_for(driver, 'return !document.documentElement.hasAttribute("data-orbit-focus");',
+             "the corner menu's Exit focus restores the full interface")
+    checks.append("The quarter-circle corner hub opens a canvas tab with the real address field ready, and its Exit focus item restores the browser without any permanent on-screen buttons")
 
     # Preserve Firefox's alternative tab layout and the row that owns OS buttons.
     driver.execute_script('Services.prefs.setBoolPref("sidebar.verticalTabs", true);')
@@ -1014,8 +1045,7 @@ def run_focus_checks(driver, handle, url, result, folder):
     move_to_content(driver)
     wait_focus_idle(driver)
     assert_focus_geometry(hover_focus_zone(driver, "address"))
-    left_click(driver, "orbit-focus-exit")
-    wait_for(driver, 'return !document.documentElement.hasAttribute("data-orbit-focus");', "focus exit restores vertical tabs")
+    exit_focus(driver)
     assert driver.execute_script('return document.getElementById("sidebar-container").getBoundingClientRect().width;') >= sidebar_width - 1
     driver.execute_script('Services.prefs.clearUserPref("sidebar.verticalTabs");')
     wait_for(driver, 'return !document.getElementById("sidebar-container")?.contains(document.getElementById("tabbrowser-tabs"));',
@@ -1039,39 +1069,66 @@ def force_default_theme(driver, dark):
 
 
 def verify_default_focus_window(driver, result):
-    """With Orbit's shipped default, a new ordinary window opens in focus mode."""
+    """With Orbit's shipped defaults, a new window opens the canvas home page in focus mode."""
     driver.set_context("chrome")
     assert not driver.execute_script('return document.documentElement.hasAttribute("data-orbit-focus");'), \
         "The opted-out main test window must start with the full toolbar"
+    defaults = driver.execute_script('''
+        const branch = Services.prefs.getDefaultBranch("");
+        return {homepage: branch.getStringPref("browser.startup.homepage", ""),
+            newTab: ChromeUtils.importESModule("resource:///modules/AboutNewTab.sys.mjs").AboutNewTab.newTabURL};''')
+    result["default_pages"] = defaults
+    assert defaults == {"homepage": CANVAS_URI, "newTab": CANVAS_URI}, defaults
     state = driver.execute_async_script('''
         const complete = arguments[arguments.length - 1];
+        const canvasURI = arguments[0];
         Services.prefs.setBoolPref("browser.orbit.focus.default", true);
+        // Use Orbit's shipped home page for this window only.
+        Services.prefs.clearUserPref("browser.startup.homepage");
         const opened = OpenBrowserWindow();
-        const observer = subject => {
-            if (subject !== opened) return;
-            Services.obs.removeObserver(observer, "browser-delayed-startup-finished");
-            const root = opened.document.documentElement;
-            const state = {focus: root.getAttribute("data-orbit-focus"),
-                chip: opened.document.getElementById("orbit-focus-chip")?.hidden === false,
-                trigger: opened.document.getElementById("orbit-focus-tools-trigger")?.hidden === false,
-                urlbarFocused: !!opened.gURLBar?.focused,
-                addressVisible: root.getAttribute("data-orbit-focus-address-visible") === "true",
-                toolboxVisibility: opened.getComputedStyle(opened.document.getElementById("navigator-toolbox")).visibility};
+        const finish = state => {
             Services.prefs.setBoolPref("browser.orbit.focus.default", false);
+            Services.prefs.setStringPref("browser.startup.homepage", "about:blank");
             opened.close();
             complete(state);
         };
+        const observer = subject => {
+            if (subject !== opened) return;
+            Services.obs.removeObserver(observer, "browser-delayed-startup-finished");
+            const started = Date.now();
+            const poll = () => {
+                const browser = opened.gBrowser.selectedBrowser;
+                const canvas = browser.currentURI.spec === canvasURI &&
+                    browser.contentDocument?.readyState === "complete" && !!browser.contentWindow?.OrbitCanvasBridge;
+                if (!canvas && Date.now() - started < 20000) { opened.setTimeout(poll, 100); return; }
+                const root = opened.document.documentElement;
+                const hotzone = opened.document.getElementById("orbit-focus-tools-hotzone");
+                const box = hotzone?.getBoundingClientRect();
+                finish({focus: root.getAttribute("data-orbit-focus"), canvas,
+                    uri: browser.currentURI.spec, tabs: opened.gBrowser.tabs.length,
+                    chip: !!opened.document.getElementById("orbit-focus-chip"),
+                    trigger: !!opened.document.getElementById("orbit-focus-tools-trigger"),
+                    hotzone: box && {x: box.x, y: box.y, width: box.width, height: box.height, hidden: hotzone.hidden},
+                    urlbarFocused: !!opened.gURLBar?.focused,
+                    addressVisible: root.getAttribute("data-orbit-focus-address-visible") === "true",
+                    toolboxVisibility: opened.getComputedStyle(opened.document.getElementById("navigator-toolbox")).visibility});
+            };
+            poll();
+        };
         Services.obs.addObserver(observer, "browser-delayed-startup-finished");
-    ''', script_timeout=60000)
+    ''', script_args=[CANVAS_URI], script_timeout=60000)
     result["default_focus_window"] = state
-    assert state["focus"] == "true" and state["chip"] and state["trigger"], state
-    assert state["toolboxVisibility"] == "hidden", state
-    # Firefox focuses a blank window's address field before delayed startup.
+    assert state["focus"] == "true" and state["toolboxVisibility"] == "hidden", state
+    assert state["canvas"] and state["uri"] == CANVAS_URI and state["tabs"] == 1, state
+    # Focus mode has no permanent buttons; only the corner hotzone is armed.
+    assert not state["chip"] and not state["trigger"], state
+    hotzone = state["hotzone"]
+    assert hotzone and not hotzone["hidden"] and hotzone["x"] == 0 and hotzone["y"] == 0 and hotzone["width"] <= 40, state
+    # Firefox focuses a new window's address field for its canvas home page.
     # Default focus mode must keep that focus visible instead of stealing it.
     assert not state["urlbarFocused"] or state["addressVisible"], state
-    wait_for(driver, 'return Services.wm.getEnumerator("navigator:browser").hasMoreElements() && '
-             '[...Services.wm.getEnumerator("navigator:browser")].length === 1;', "default focus test window closes")
-    result["checks"].append("A new ordinary window opens in focus mode by default and keeps Firefox's initial address focus visible")
+    wait_for(driver, 'return [...Services.wm.getEnumerator("navigator:browser")].length === 1;', "default focus test window closes")
+    result["checks"].append("A new window opens Orbit's canvas home page in focus mode with no permanent buttons, only the top-left corner sensor, and keeps Firefox's initial address focus visible")
 
 
 def run_checks(driver, handle, url, result, folder):
@@ -1283,7 +1340,7 @@ def run_checks(driver, handle, url, result, folder):
                  [TOOLS_ROOT_ID, f"orbit-focus-extension:{EXTENSION_ID}"])
         screenshot(driver, folder, f"ux-focus-tools-{color}", result)
         dismiss_tools(driver)
-        left_click(driver, "orbit-focus-exit")
+        exit_focus(driver)
     checks.append("Native webpage radial menus use circular canvas-style controls, and capture, commands, and focus render in default dark and light Orbit colors")
 
     public_before = board(driver)
@@ -1300,7 +1357,7 @@ def run_checks(driver, handle, url, result, folder):
     hover_tool(driver, "orbit-focus-extensions")
     assert not any(item["id"] == f"orbit-focus-extension:{EXTENSION_ID}" for item in tools_state(driver)["items"]), state
     dismiss_tools(driver)
-    left_click(driver, "orbit-focus-exit")
+    exit_focus(driver)
     checks.append("The focus tools extension fan preserves the real extension's private-window permission and excludes a not-allowed browser action")
     open_palette(driver)
     state = search(driver, "orbital reading room")

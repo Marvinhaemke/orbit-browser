@@ -25,7 +25,8 @@ export function pageRadialItems(items, depth = 0) {
  * viewport CSS pixels. parentIndices identifies each opening sector in the
  * preceding ring; its midpoint anchors a partial fan. Omitted parents retain
  * standalone full rings. Small windows shrink ring widths instead of clipping. */
-export function layoutRadialRings({width, height, center, counts, parentIndices = []}) {
+export function layoutRadialRings({width, height, center, counts, parentIndices = [], corner = null}) {
+  if (corner) return layoutCornerRings({width, height, counts, parentIndices, corner});
   const available = Math.max(1, Math.min(width, height) / 2 - 10);
   const count = Math.max(1, counts.length);
   const gap = Math.min(5, available / (count * 6));
@@ -79,6 +80,85 @@ export function layoutRadialRings({width, height, center, counts, parentIndices 
   return {center: {x, y}, radius, centerRadius, ringWidth, gap, rings};
 }
 
+const CORNER_STARTS = {"top-left": 0, "top-right": Math.PI / 2};
+
+/** A quarter-circle menu pinned to a window corner. Its hub is the corner
+ * itself. Root commands sit on one or two concentric arcs inside the quarter;
+ * each submenu fans out beyond them near its parent, clamped so every circle
+ * stays fully inside the window. Hit testing uses the same ring/sector shape
+ * as full menus. */
+export function layoutCornerRings({width, height, counts, parentIndices = [], corner = "top-left"}) {
+  if (!(corner in CORNER_STARTS)) throw new TypeError("Unsupported radial corner");
+  const base = CORNER_STARTS[corner];
+  const center = {x: corner === "top-right" ? width : 0, y: 0};
+  const target = clamp(Math.min(width, height) / 16, 22, 28);
+  const centerRadius = clamp(target * 2.56, 54, 72);
+  const gap = 6;
+  // Angles at a radius where a circle stays a margin away from both edges.
+  const span = radius => {
+    const inset = Math.asin(Math.min(1, (target + 10) / radius));
+    return [base + inset, base + Math.PI / 2 - inset];
+  };
+  const step = radius => 2 * Math.asin(Math.min(1, (target + 4) / radius));
+  const fits = (count, radius) => {
+    const [from, to] = span(radius);
+    return to > from && (count - 1) * step(radius) <= to - from;
+  };
+  const radiusFor = (count, minimum) => {
+    let radius = minimum;
+    while (!fits(count, radius) && radius < minimum + 1200) radius += 2;
+    return radius;
+  };
+  const sector = (index, angle, orbit, sectorAngle) => ({index, angle, orbit, targetRadius: target,
+    x: center.x + Math.cos(angle) * orbit, y: center.y + Math.sin(angle) * orbit,
+    start: angle - sectorAngle / 2, end: angle + sectorAngle / 2});
+  const rings = [];
+  for (const [depth, count] of counts.entries()) {
+    const n = Math.max(1, count);
+    if (depth === 0) {
+      // Up to three commands share one arc; more split across two arcs so the
+      // quarter stays compact (eight commands reach about 225 px).
+      const innerCount = n <= 3 ? n : Math.ceil(n * 3 / 8);
+      const rows = [innerCount, n - innerCount].filter(Boolean);
+      let minimum = centerRadius + gap + target;
+      const radii = rows.map(rowCount => {
+        const radius = radiusFor(rowCount, minimum);
+        minimum = radius + 2 * target + gap;
+        return radius;
+      });
+      const sectors = [];
+      rows.forEach((rowCount, row) => {
+        const [from, to] = span(radii[row]);
+        const spacing = rowCount > 1 ? (to - from) / (rowCount - 1) : 0;
+        for (let i = 0; i < rowCount; i++) {
+          sectors.push(sector(sectors.length, rowCount > 1 ? from + i * spacing : (from + to) / 2,
+            radii[row], rowCount > 1 ? spacing : to - from));
+        }
+      });
+      const [start, end] = span(radii[0]);
+      rings.push({depth, count, fan: false, inner: radii[0] - target - 3, outer: radii.at(-1) + target + 3,
+        anchor: base + Math.PI / 4, start, end, span: end - start, sectorAngle: step(radii[0]),
+        insetAngle: 0, orbitRadius: radii[0], targetRadius: target, sectors: sectors.slice(0, count)});
+      continue;
+    }
+    const previous = rings[depth - 1];
+    const parent = previous.sectors[parentIndices[depth - 1]] || previous.sectors[0];
+    const orbit = radiusFor(n, previous.outer + gap + target + 3);
+    const [from, to] = span(orbit);
+    // Fans keep their options close together beside the parent.
+    const spacing = Math.min(step(orbit) * 1.08, n > 1 ? (to - from) / (n - 1) : Infinity);
+    const width = spacing * (n - 1);
+    const middle = clamp(parent?.angle ?? base + Math.PI / 4, from + width / 2, Math.max(from + width / 2, to - width / 2));
+    const sectors = Array.from({length: count}, (_, index) =>
+      sector(index, middle - width / 2 + index * spacing, orbit, n > 1 ? spacing : step(orbit)));
+    const first = sectors[0]?.start ?? middle, last = sectors.at(-1)?.end ?? middle;
+    rings.push({depth, count, fan: true, inner: orbit - target - 3, outer: orbit + target + 3,
+      anchor: parent?.angle ?? middle, start: first, end: last, span: last - first,
+      sectorAngle: n > 1 ? spacing : step(orbit), insetAngle: 0, orbitRadius: orbit, targetRadius: target, sectors});
+  }
+  return {center, radius: rings.at(-1)?.outer ?? centerRadius, centerRadius, ringWidth: 2 * target + 6, gap, rings, corner};
+}
+
 export function radialSectorPath(cx, cy, inner, outer, start, end) {
   const at = (radius, angle) => [cx + Math.cos(angle) * radius, cy + Math.sin(angle) * radius];
   const a = at(outer, start), b = at(outer, end), c = at(inner, end), d = at(inner, start);
@@ -120,6 +200,9 @@ function visualLabel(node) {
     "context-selectall": "Select all",
     "context-viewsource": "Page source",
     "context-inspect": "Inspect",
+    "orbit-focus-more-tools": "More tools",
+    "orbit-focus-extensions-panel": "Extension panel",
+    "orbit-focus-manage-extensions": "Manage add-ons",
   };
   return labels[node.id] || node.label;
 }
@@ -198,7 +281,7 @@ const GLYPHS = {
 
 // Ordered: specific Orbit and native Firefox identifiers before broad words.
 const GLYPH_RULES = [
-  [/^orbit-send-to-canvas$|^orbit-focus-canvas$/, "canvas"],
+  [/^orbit-send-to-canvas$/, "canvas"], [/^orbit-focus-canvas$/, "grid"],
   [/^orbit-canvas-page$/, "card"], [/^orbit-canvas-link$/, "link"], [/^orbit-canvas-selection$/, "note"],
   [/^orbit-focus-(extension|manage-extensions)/, "puzzle"], [/^orbit-focus-bookmark/, "star"], [/^orbit-focus-history/, "clock"],
   [/^orbit-focus-privacy$/, "shield"], [/^orbit-focus-(settings|preferences)$/, "gear"],
@@ -287,6 +370,19 @@ function shortLines(value, limit) {
     else lines[index] += `${lines[index] ? " " : ""}${word}`;
   }
   return lines.slice(0, 2).map(line => line.length > limit ? `${line.slice(0, Math.max(1, limit - 1))}…` : line);
+}
+
+/** Two short lines inside a circle. A single long word such as "Extensions"
+ * is set slightly smaller rather than cut off; only very long names truncate. */
+export function fitRadialLabel(value, targetRadius) {
+  const limit = clamp(Math.floor((targetRadius * 2 - 12) / 5.7), 4, 10);
+  const normal = shortLines(value, limit);
+  if (!normal.some(line => line.endsWith("…"))) return {lines: normal, size: 10};
+  const roomy = shortLines(value, 11);
+  const longest = Math.max(1, ...roomy.map(line => line.length));
+  const size = Math.min(10, (targetRadius * 2 - 9) / (longest * .58));
+  if (size >= 7.8 && !roomy.some(line => line.endsWith("…"))) return {lines: roomy, size: Math.round(size * 10) / 10};
+  return {lines: normal, size: 10};
 }
 
 export class OrbitRadialView {
@@ -422,6 +518,8 @@ export class OrbitRadialView {
     this.root.classList.remove("orbit-radial-leaving", "orbit-radial-keyboard");
     this.root.classList.toggle("orbit-radial-held", model.passthrough === true);
     this.root.dataset.mode = model.mode || "context";
+    if (model.corner) this.root.dataset.corner = model.corner;
+    else delete this.root.dataset.corner;
     this.root.classList.toggle("orbit-radial-morph", hadMenu);
     this._render();
     if (!model.passthrough && model.focus !== false) this.panel.focus({preventScroll: true});
@@ -476,7 +574,7 @@ export class OrbitRadialView {
     }
     const requested = this._toViewport(this.model.center || {x: this.win.innerWidth / 2, y: this.win.innerHeight / 2});
     this.geometry = layoutRadialRings({width: this.win.innerWidth, height: this.win.innerHeight,
-      center: requested, counts: this.rings.map(ring => ring.length),
+      center: requested, corner: this.model.corner || null, counts: this.rings.map(ring => ring.length),
       parentIndices: this.path.map((parent, depth) => this.rings[depth].findIndex(node => node.id === parent.id))});
     const geometry = this.geometry;
     const size = Math.ceil(geometry.radius * 2 + 8);
@@ -571,7 +669,7 @@ export class OrbitRadialView {
         if (node.disabled) g.classList.add("orbit-radial-disabled");
         if (node.checked) g.classList.add("orbit-radial-checked");
         if (this.path[depth]?.id === node.id) g.classList.add("orbit-radial-parent");
-        const r = ring.orbitRadius;
+        const r = sector.orbit ?? ring.orbitRadius;
         const x = localCenter + Math.cos(angle) * r;
         const y = localCenter + Math.sin(angle) * r;
         const border = Math.min(1, sector.targetRadius);
@@ -595,9 +693,10 @@ export class OrbitRadialView {
           else this._monogram(g, node, x, iconY, compact);
         }
         if (!compact) {
-          const limit = clamp(Math.floor((sector.targetRadius * 2 - 12) / 5.7), 4, 10);
-          shortLines(visualLabel(node), limit).forEach((line, lineIndex) => {
+          const {lines, size} = fitRadialLabel(visualLabel(node), sector.targetRadius);
+          lines.forEach((line, lineIndex) => {
             const label = this._svg("text", {x, y: y + 9 + lineIndex * 12, class: "orbit-radial-label", "text-anchor": "middle"});
+            if (size < 10) label.style.setProperty("font-size", `${size}px`);
             label.textContent = line; g.append(label);
           });
         }
@@ -638,13 +737,23 @@ export class OrbitRadialView {
     center.tabIndex = -1;
     center.disabled = !!this.model.centerItem?.disabled;
     center.dataset.orbitId = this.model.centerItem?.id || "orbit-center";
-    center.dataset.orbitX = geometry.center.x;
-    center.dataset.orbitY = geometry.center.y;
+    // A corner hub's pointer target is inside its visible quarter.
+    const hubAngle = geometry.corner ? geometry.rings[0]?.anchor ?? Math.PI / 4 : 0;
+    const hubOffset = geometry.corner ? geometry.centerRadius * .55 : 0;
+    center.dataset.orbitX = geometry.center.x + Math.cos(hubAngle) * hubOffset;
+    center.dataset.orbitY = geometry.center.y + Math.sin(hubAngle) * hubOffset;
     center.setAttribute("aria-label", this.model.centerItem?.label || "Orbit");
     const centerIcon = this._icon(this.model.centerItem || {icon: "◉"}, 13, 13, 26) ||
       this._html("span", "orbit-radial-center-icon", this.model.centerItem ? iconText(this.model.centerItem) : "◉");
     centerIcon.classList.add("orbit-radial-center-icon");
+    const centerKey = normalizedAccessKey(this.model.centerItem);
+    if (centerKey) center.setAttribute("aria-keyshortcuts", centerKey.toLocaleUpperCase());
     center.append(centerIcon, this._html("span", "orbit-radial-center-label", this.model.centerItem?.label || "Orbit"));
+    if (centerKey) {
+      const badge = this._html("span", "orbit-radial-center-key", centerKey.toLocaleUpperCase());
+      badge.setAttribute("aria-hidden", "true");
+      center.append(badge);
+    }
     if (this.model.centerItem?.kind === "info" && this.model.centerItem.description) {
       // The tab wheel's hub names the tab you are leaving, as plain text.
       center.classList.add("orbit-radial-center-info");
@@ -666,7 +775,11 @@ export class OrbitRadialView {
     const reserveHeight = Math.min(112, Math.max(1, height - 32));
     const rootRadius = rings[0]?.outer || centerRadius;
     const circles = [{x: center.x, y: center.y, targetRadius: centerRadius}, ...rings.flatMap(ring => ring.sectors)];
-    const locations = [
+    const cornerSpots = this.geometry.corner ? [
+      [center.x === 0 ? radius + 18 : width - radius - 18 - labelWidth, 16],
+      [center.x === 0 ? 16 : width - labelWidth - 16, radius + 18],
+    ] : [];
+    const locations = [...cornerSpots,
       [center.x - labelWidth / 2, center.y + rootRadius + 20],
       [center.x - labelWidth / 2, center.y - rootRadius - 20 - reserveHeight],
       [center.x - labelWidth / 2, center.y + radius + 20],
@@ -896,6 +1009,13 @@ export class OrbitRadialView {
       const fan = this.rings.length - 1;
       const index = this.rings[fan].findIndex(node => node.id === trail.node.id);
       if (index >= 0) this._runAccessKey(this.rings[fan][index], fan, index, event);
+      return;
+    }
+    const centerItem = this.model.centerItem;
+    if (centerItem && !centerItem.disabled && normalizedAccessKey(centerItem) === key) {
+      this.active = {node: centerItem, depth: -1, index: -1};
+      this._paintActive();
+      this._activate(centerItem, event);
       return;
     }
     const nodes = this.rings[current] || [];

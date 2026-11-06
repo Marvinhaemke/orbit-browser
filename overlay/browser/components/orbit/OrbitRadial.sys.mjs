@@ -232,9 +232,12 @@ class RadialWindow {
     const id = this.context.onLink ? "context-openlinkintab" : this.context.onImage ? "context-viewimage" : null;
     const node = id && this.win.document.getElementById(id);
     if (node) this.elements.set("orbit-radial-new-tab", node);
+    // The center replaces the native item in the ring, so it keeps its key.
+    const accesskey = node?.getAttribute("accesskey") || "";
     return {
       id: "orbit-radial-new-tab", label: "Open in new tab", kind: "native-center", icon: "+",
       disabled: id ? !node || !nativeMenuVisible(node) || node.disabled : false,
+      ...([...accesskey.trim()].length === 1 ? { accesskey: accesskey.trim() } : {}),
     };
   }
 

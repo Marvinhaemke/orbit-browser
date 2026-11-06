@@ -667,3 +667,26 @@ test("a shortcut replaces its own native canvas tab with a fresh null principal"
   assert.equal(win.gBrowser.selectedBrowser.currentURI.spec, "https://www.mozilla.org/");
   Orbit.uninit(win);
 });
+
+test("a home-page canvas connects before delayed startup without initializing window chrome early", () => {
+  const calls = [];
+  const original = { ...modules.OrbitInteractions };
+  modules.OrbitInteractions.init = win => calls.push(["interactions", win]);
+  try {
+    const win = createWindow();
+    const { canvas } = createCanvasTab(win);
+    const bridge = Orbit.connectCanvas(canvas);
+    assert.equal(bridge.getBoard(), null);
+    assert.deepEqual(calls, [], "only the canvas bridge exists before delayed startup");
+    assert.equal(modules.AboutNewTab.newTabURL, "chrome://browser/content/orbit/orbit.html");
+    Orbit.init(win);
+    assert.deepEqual(calls, [["interactions", win]], "delayed startup still installs browser chrome");
+    assert.equal(Orbit.connectCanvas(canvas), bridge, "the early bridge survives delayed startup");
+    Orbit.init(win);
+    assert.equal(calls.length, 1);
+    Orbit.uninit(win);
+    assert.throws(() => bridge.getBoard(), /packaged canvas/);
+  } finally {
+    Object.assign(modules.OrbitInteractions, original);
+  }
+});
