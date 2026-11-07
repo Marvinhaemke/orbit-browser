@@ -277,18 +277,22 @@ const GLYPHS = {
   menu: "M4 7h16M4 12h16M4 17h16",
   expand: "M15 4h5v5M20 4l-7 7M9 20H4v-5M4 20l7-7",
   canvas: "M10 4h10v16H10M10 16v4M3 12h11m-3.5-3.5L14 12l-3.5 3.5",
+  close: "M6 6l12 12M18 6 6 18",
 };
 
 // Ordered: specific Orbit and native Firefox identifiers before broad words.
 const GLYPH_RULES = [
   [/^orbit-send-to-canvas$/, "canvas"], [/^orbit-focus-canvas$/, "grid"],
   [/^orbit-canvas-page$/, "card"], [/^orbit-canvas-link$/, "link"], [/^orbit-canvas-selection$/, "note"],
+  [/^orbit-canvas-[a-z]+-loose$/, "canvas"], [/^orbit-canvas-[a-z]+-frame-/, "frame"],
   [/^orbit-focus-(extension|manage-extensions)/, "puzzle"], [/^orbit-focus-bookmark/, "star"], [/^orbit-focus-history/, "clock"],
   [/^orbit-focus-privacy$/, "shield"], [/^orbit-focus-(settings|preferences)$/, "gear"],
   [/^orbit-focus-more-tools$/, "grid"], [/^orbit-focus-customize$/, "frame"],
   [/^orbit-focus-browser-menu$/, "menu"], [/^orbit-focus-exit$/, "expand"],
   [/^orbit-focus-tabs$/, "tab"], [/^orbit-focus-new-tab$/, "plus"], [/^orbit-focus-commands$/, "crosshair"],
   [/^orbit-radial-current-tab$/, "tab"], [/^orbit-radial-new-tab$/, "plus"],
+  [/^orbit-radial-tab-\d+-close$/, "close"], [/^orbit-radial-tab-\d+-canvas(?:-loose)?$/, "canvas"],
+  [/^orbit-radial-tab-\d+-canvas-frame-/, "frame"],
   [/(?:^|-)back$/, "back"], [/forward$/, "forward"], [/reload$/, "reload"],
   [/bookmark/, "star"], [/openlinkprivate|private/, "private"],
   [/usercontext|container/, "container"], [/splitview/, "split"],
@@ -340,12 +344,15 @@ export function radialDetail(node) {
   if (!node) return "";
   if (node.kind === "tab" || node.kind === "info") {
     const value = String(node.description || "");
+    let place;
     try {
       const url = new URL(value);
-      return (url.protocol === "http:" || url.protocol === "https:" ? url.host : `${url.protocol}${url.pathname}`).slice(0, 200);
+      place = (url.protocol === "http:" || url.protocol === "https:" ? url.host : `${url.protocol}${url.pathname}`).slice(0, 200);
     } catch {
-      return value.slice(0, 200);
+      place = value.slice(0, 200);
     }
+    // A tab with its own actions says how to reach them.
+    return node.kind === "tab" && node.actionable && node.children?.length ? [place, "Pause for actions"].filter(Boolean).join(" · ") : place;
   }
   const children = node.children?.filter(child => child.kind !== "placeholder").length;
   if (node.kind === "group") {
@@ -700,7 +707,7 @@ export class OrbitRadialView {
             label.textContent = line; g.append(label);
           });
         }
-        if (node.children?.length) {
+        if (node.children?.length && !node.actionable) {
           // A small outward chevron on the rim says "more beyond this circle".
           const ux = Math.cos(angle), uy = Math.sin(angle);
           const tip = sector.targetRadius - 2.5, base = sector.targetRadius - 6;
@@ -708,6 +715,10 @@ export class OrbitRadialView {
             "stroke-linecap": "round", "stroke-linejoin": "round",
             d: `M ${x + ux * base - uy * 3.5} ${y + uy * base + ux * 3.5} L ${x + ux * tip} ${y + uy * tip} ` +
               `L ${x + ux * base + uy * 3.5} ${y + uy * base - ux * 3.5}`}));
+          g.setAttribute("aria-haspopup", "menu");
+          g.setAttribute("aria-expanded", String(this.path[depth]?.id === node.id));
+        } else if (node.children?.length) {
+          // A tab's own actions open after a pause; the tab itself still activates.
           g.setAttribute("aria-haspopup", "menu");
           g.setAttribute("aria-expanded", String(this.path[depth]?.id === node.id));
         }
@@ -831,13 +842,27 @@ export class OrbitRadialView {
         const depth = hit.depth;
         const sameParent = this.path[depth]?.id === node.id;
         if (!sameParent) {
+          const settle = 145;
+          const dwell = node.children?.length && Number.isFinite(node.dwell) && node.dwell > settle ? node.dwell : null;
           this.hoverTimer = this.win.setTimeout(() => {
             if (this.active?.node.id !== node.id) return;
             const current = this.active.node;
+            if (dwell) {
+              // Close the fan of whatever was hovered before at the usual
+              // pace; open this node's own fan only after its longer dwell.
+              if (this.path.length > depth) { this.path = this.path.slice(0, depth); this._render(); }
+              this.hoverTimer = this.win.setTimeout(() => {
+                if (this.active?.node.id !== node.id) return;
+                this.path = this.path.slice(0, depth);
+                this.path.push(this.active.node);
+                this._render();
+              }, dwell - settle);
+              return;
+            }
             this.path = this.path.slice(0, depth);
             if (current.children?.length) this.path.push(current);
             this._render();
-          }, node.children?.length ? 90 : 145);
+          }, dwell ? settle : node.children?.length ? 90 : settle);
         }
       }
     }
@@ -897,13 +922,17 @@ export class OrbitRadialView {
   _activate(node, event = null) {
     if (node.disabled) return;
     this.win.clearTimeout(this.hoverTimer);
-    if (node.children?.length && this.active?.depth >= 0) {
-      this.path = this.path.slice(0, this.active.depth);
-      this.path.push(node);
-      this._render();
-      return;
-    }
+    // An actionable node (a tab) runs itself; its fan is reached by dwell or ArrowDown.
+    if (node.children?.length && !node.actionable && this._expand(node)) return;
     this._emit("onActivate", node, event);
+  }
+
+  _expand(node) {
+    if (!node.children?.length || !(this.active?.depth >= 0)) return false;
+    this.path = this.path.slice(0, this.active.depth);
+    this.path.push(node);
+    this._render();
+    return true;
   }
 
   _keyboard(event) {
@@ -945,7 +974,7 @@ export class OrbitRadialView {
       this._paintActive(); return;
     }
     if (event.key === "ArrowDown" && this.active?.node.children?.length) {
-      this._activate(this.active.node);
+      this._expand(this.active.node);
       const depth = this.rings.length - 1;
       const index = this.rings[depth].findIndex(node => !node.disabled);
       if (index >= 0) this.active = {node: this.rings[depth][index], depth, index};

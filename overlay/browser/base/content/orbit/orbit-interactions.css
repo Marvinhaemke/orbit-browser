@@ -147,6 +147,22 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A tab row's close, canvas and frame shortcuts appear with its selection. */
+.orbit-command-actions { display: flex; gap: 4px; margin-inline-start: auto; flex: none; opacity: 0; transition: opacity 140ms ease; }
+.orbit-command-result[aria-selected="true"] .orbit-command-actions, .orbit-command-result:hover .orbit-command-actions { opacity: 1; }
+.orbit-command-action {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  font-size: 15px;
+  color: var(--orbit-action-muted);
+  background: var(--orbit-action-base);
+  box-shadow: 1px 1px 3px var(--orbit-action-shadow), -1px -1px 3px var(--orbit-action-highlight);
+}
+.orbit-command-action:hover { color: var(--orbit-action-accent); }
+.orbit-command-action-close:hover { color: #c2416a; }
 #orbit-command-empty { padding: 18px 12px; color: var(--orbit-action-muted); }
 .orbit-command-hint { margin: 0; text-align: center; font-size: 11px; color: var(--orbit-action-muted); }
 
@@ -458,7 +474,7 @@
 }
 @media (prefers-reduced-motion: reduce) {
   #orbit-command-palette, #orbit-command-panel,
-  #orbit-command-close, #orbit-command-input, .orbit-command-result,
+  #orbit-command-close, #orbit-command-input, .orbit-command-result, .orbit-command-actions,
   :root[data-orbit-focus="true"] :is(#urlbar-container[data-orbit-focus-address="true"],
     [data-orbit-focus-window-controls="true"], .titlebar-button, .orbit-focus-native-anchor) {
     animation: none !important;
@@ -490,4 +506,5 @@
     forced-color-adjust: none;
   }
   .orbit-command-result[aria-selected="true"] .orbit-command-detail { color: HighlightText; }
+  .orbit-command-action { border: 1px solid ButtonBorder; background: ButtonFace; color: ButtonText; }
 }

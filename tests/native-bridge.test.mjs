@@ -202,7 +202,7 @@ function createCanvasTab(win) {
 }
 
 const source = await readFile(new URL("../overlay/browser/components/orbit/Orbit.sys.mjs", import.meta.url), "utf8");
-const { Orbit, shortcutRecords } = await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`);
+const { Orbit, shortcutRecords, placeInFrame, placeLoose, frameAt } = await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`);
 const board = () => ({
   version: 1,
   camera: { x: 0, y: 0, zoom: 1 },
@@ -403,6 +403,243 @@ test("native Send to canvas saves and reuses page/link cards with their containe
   assert.notEqual(nativeLink, win.gBrowser.selectedTab);
   Orbit.uninit(win);
   assert.equal(win.timers.size, 0);
+});
+
+const nativeTab = (win, url) => win.gBrowser.addTab(url, {
+  userContextId: 0, allowInheritPrincipal: false, triggeringPrincipal: { isSystemPrincipal: false },
+});
+const frameBoard = (frames, items = []) => ({
+  version: 1, camera: { x: 0, y: 0, zoom: 1 }, connections: [], strokes: [], items,
+  frames: frames.map(frame => ({ title: "Frame", color: "#8c86f4", ...frame })),
+});
+
+test("frame placement fills free slots, skips smaller inner frames and grows the frame", () => {
+  const board = frameBoard([
+    { id: "outer", x: 0, y: 0, w: 560, h: 340 },
+    { id: "inner", x: 0, y: 40, w: 300, h: 260 },
+  ]);
+  const card = () => ({ type: "tab", w: 248, h: 160 });
+  const first = placeInFrame(board, card(), board.frames[0]);
+  assert.equal(frameAt(board, first.x + 124, first.y + 80).id, "outer", "a slot inside a smaller frame is skipped");
+  board.items.push(first);
+  const second = placeInFrame(board, card(), board.frames[0]);
+  board.items.push(second);
+  assert.ok(second.y > first.y || second.x !== first.x);
+  assert.ok(board.frames[0].h >= second.y + 160 + 20, "a full frame grows to hold its new card");
+  for (const item of board.items) assert.equal(frameAt(board, item.x + 124, item.y + 80).id, "outer");
+  const loose = placeLoose(board, card());
+  assert.equal(frameAt(board, loose.x + 124, loose.y + 80), null, "loose cards stay outside frames");
+});
+
+test("open tabs join a frame or a dropped point once, and a saved card is reused", () => {
+  const win = createWindow();
+  Orbit.openBoard(win);
+  const canvas = createCanvasTab(win);
+  const other = createCanvasTab(win);
+  const author = Orbit.connectCanvas(canvas.canvas);
+  const observer = Orbit.connectCanvas(other.canvas);
+  nativeTab(win, "https://b.example/");
+  nativeTab(win, "https://c.example/");
+  author.saveBoard(frameBoard([{ id: "research", x: 0, y: 0, w: 560, h: 340, title: "Research" }], [
+    { id: "saved", type: "tab", x: 900, y: 900, w: 248, h: 160, title: "Old visit", url: "https://c.example/", userContextId: 0 },
+  ]));
+  const heard = { author: 0, observer: 0 };
+  author.subscribe((tabs, change) => { if (change?.type === "board-changed") heard.author++; });
+  observer.subscribe((tabs, change) => { if (change?.type === "board-changed") heard.observer++; });
+  const [a, b, c] = author.listTabs();
+  const placed = author.placeTabs({ tabIds: [a.id, b.id], frameId: "research" });
+  assert.equal(placed.added, 2);
+  assert.deepEqual(heard, { author: 0, observer: 1 }, "the calling canvas keeps its own undo history");
+  const inFrame = placed.board.items.filter(item => item.frameId === "research");
+  assert.deepEqual(inFrame.map(item => item.tabId).sort(), [a.id, b.id].sort());
+  assert.equal(new Set(inFrame.map(item => `${item.x},${item.y}`)).size, 2, "cards never stack");
+
+  const again = author.placeTabs({ tabIds: [a.id], frameId: "research" });
+  assert.equal(again.added, 0);
+  assert.equal(again.board.items.length, 3, "a tab never gets a second card");
+
+  const reused = author.placeTabs({ tabIds: [c.id], point: { x: 1200, y: 400 } });
+  assert.equal(reused.added, 0, "the saved card for the same address is reused");
+  const card = reused.board.items.find(item => item.id === "saved");
+  assert.equal(card.tabId, c.id);
+  assert.equal(card.x + card.w / 2, 1200);
+  assert.equal(card.frameId, undefined);
+  const dropped = author.placeTabs({ tabIds: [c.id], point: { x: 100, y: 120 } });
+  assert.equal(dropped.board.items.find(item => item.id === "saved").frameId, "research", "dropping on a frame joins it");
+
+  for (const options of [{ tabIds: [] }, { tabIds: Array(101).fill(a.id) }, { tabIds: [a.id], frameId: "missing" },
+    { tabIds: ["orbit-missing"] }, { tabIds: [a.id], point: { x: Infinity, y: 0 } }]) {
+    assert.throws(() => author.placeTabs(options));
+  }
+  assert.equal(author.getBoard().items.length, 3);
+  Orbit.uninit(win);
+});
+
+test("closing tabs keeps their cards, keeps an overlay open and never closes the last tab's window", () => {
+  const win = createWindow();
+  const second = nativeTab(win, "https://b.example/");
+  win.gBrowser.selectedTab = second;
+  const removals = [];
+  win.gBrowser.removeTab = (tab, options) => {
+    removals.push(options);
+    win.gBrowser.tabs = win.gBrowser.tabs.filter(candidate => candidate !== tab);
+    if (win.gBrowser.selectedTab === tab && win.gBrowser.tabs.length) win.gBrowser.selectedTab = win.gBrowser.tabs[0];
+  };
+  let opened = 0;
+  win.BrowserCommands = { openTab() { opened++; } };
+  Orbit.openBoard(win);
+  const bridge = win.OrbitChrome;
+  const [first, current] = bridge.listTabs();
+  bridge.placeTabs({ tabIds: [first.id, current.id] });
+  assert.equal(bridge.closeTabs([current.id]), 1);
+  assert.equal(removals[0].animate, false, "the overlay stays put while the tab beneath it closes");
+  assert.equal(win.document.getElementById("orbit-canvas-overlay").hidden, false, "closing the selected tab keeps the canvas open");
+  assert.equal(bridge.getBoard().items.length, 2, "a closed tab's card stays on the canvas");
+  assert.equal(opened, 0);
+  assert.equal(bridge.closeTabs([first.id]), 1);
+  assert.equal(opened, 1, "closing the last tab opens a fresh canvas tab first");
+  assert.equal(bridge.closeTabs(["orbit-gone"]), 0);
+  assert.throws(() => bridge.closeTabs([]));
+  assert.equal(bridge.closeTab(current.id), false);
+  Orbit.uninit(win);
+});
+
+test("Send to canvas can file a page in a chosen frame and moves an existing card there", () => {
+  const win = createWindow();
+  Orbit.openBoard(win);
+  win.OrbitChrome.saveBoard(frameBoard([
+    { id: "reading", x: 0, y: 0, w: 560, h: 340, title: "Reading" },
+    { id: "later", x: 1000, y: 0, w: 560, h: 340, title: "Later" },
+  ]));
+  const context = nativeCaptureContext(win);
+  const filed = Orbit.captureContext(win, context, "page", "reading");
+  assert.equal(filed.frameId, "reading");
+  assert.match(win.document.getElementById("orbit-capture-toast").textContent, /Card added to “Reading”/);
+  assert.equal(Orbit.captureContext(win, context, "page", "reading").existing, true);
+  assert.match(win.document.getElementById("orbit-capture-toast").textContent, /Already in “Reading”/);
+  const moved = Orbit.captureContext(win, context, "page", "later");
+  assert.equal(moved.id, filed.id);
+  assert.equal(moved.frameId, "later");
+  assert.match(win.document.getElementById("orbit-capture-toast").textContent, /Moved to “Later”/);
+  assert.equal(win.OrbitChrome.getBoard().items.length, 1);
+  assert.throws(() => Orbit.captureContext(win, context, "page", "missing"), /Unknown Orbit frame/);
+  Orbit.uninit(win);
+});
+
+test("native tabs sent from the browser file into a frame once and say where they went", () => {
+  const win = createWindow();
+  Orbit.openBoard(win);
+  const tab = nativeTab(win, "https://b.example/");
+  const other = nativeTab(win, "https://c.example/");
+  win.OrbitChrome.saveBoard(frameBoard([
+    { id: "reading", x: 0, y: 0, w: 560, h: 340, title: "Reading" },
+    { id: "later", x: 1000, y: 0, w: 560, h: 340, title: "Later" },
+  ]));
+  const toast = () => win.document.getElementById("orbit-capture-toast").textContent;
+  assert.equal(Orbit.sendTabsToCanvas(win, [tab], "reading").added, 1);
+  assert.match(toast(), /Card added to “Reading”/);
+  Orbit.sendTabsToCanvas(win, [tab], "reading");
+  assert.match(toast(), /Already in “Reading”/);
+  Orbit.sendTabsToCanvas(win, [tab], "later");
+  assert.match(toast(), /Moved to “Later”/);
+  Orbit.sendTabsToCanvas(win, [tab]);
+  assert.match(toast(), /Already on your canvas/);
+  Orbit.sendTabsToCanvas(win, [tab, other], "reading");
+  assert.match(toast(), /Added 1 and moved 1 to “Reading”/);
+  const cards = win.OrbitChrome.getBoard().items;
+  assert.equal(cards.length, 2, "each tab has exactly one card");
+  assert.ok(cards.every(item => item.frameId === "reading"));
+  assert.throws(() => Orbit.sendTabsToCanvas(win, [tab], "missing"), /Unknown Orbit frame/);
+  assert.throws(() => Orbit.sendTabsToCanvas(win, [{ linkedBrowser: tab.linkedBrowser }]), /open tabs/);
+  assert.throws(() => Orbit.sendTabsToCanvas(win, []), /open tabs/);
+  Orbit.uninit(win);
+});
+
+test("tab previews are bounded JPEG snapshots of loaded websites, cached in memory", async () => {
+  const win = createWindow();
+  Orbit.openBoard(win);
+  const drawn = [];
+  const createElementNS = win.document.createElementNS;
+  win.document.createElementNS = function(ns, tag) {
+    if (tag !== "canvas") return createElementNS.call(this, ns, tag);
+    return { width: 0, height: 0, getContext: () => ({ drawImage(bitmap) { drawn.push(bitmap); } }),
+      toDataURL(type, quality) { return `data:${type};base64,${"A".repeat(12)}`; } };
+  };
+  const snapshotting = (tab, behavior = {}) => {
+    tab.linkedBrowser.clientWidth = 1440;
+    tab.linkedBrowser.browsingContext = { currentWindowGlobal: { async drawSnapshot(rect, scale, background) {
+      if (behavior.throws) throw new Error("not drawable");
+      behavior.calls = [...(behavior.calls || []), { rect, scale, background }];
+      return { width: 360, height: 300, close() { behavior.closed = true; } };
+    } } };
+    return behavior;
+  };
+  const loaded = nativeTab(win, "https://b.example/");
+  const drawing = snapshotting(loaded);
+  const pending = nativeTab(win, "https://c.example/");
+  snapshotting(pending);
+  pending.hasAttribute = name => name === "pending";
+  const broken = nativeTab(win, "https://d.example/");
+  snapshotting(broken, { throws: true });
+  const bridge = win.OrbitChrome;
+  const ids = Object.fromEntries(bridge.listTabs().map(tab => [tab.url, tab.id]));
+  const previews = await bridge.tabPreviews([ids["https://example.com/"], ids["https://b.example/"],
+    ids["https://c.example/"], ids["https://d.example/"], "orbit-missing"]);
+  assert.deepEqual(previews.map(entry => entry.id), [ids["https://b.example/"]], "only a loaded, drawable website gets a preview");
+  assert.match(previews[0].preview, /^data:image\/jpeg;base64,/);
+  assert.deepEqual(drawing.calls, [{ rect: null, scale: .25, background: "white" }], "the visible page at a small scale");
+  assert.equal(drawing.closed, true, "the snapshot bitmap is released");
+  await bridge.tabPreviews([ids["https://b.example/"]]);
+  assert.equal(drawing.calls.length, 1, "a fresh preview is reused");
+  await assert.rejects(() => bridge.tabPreviews([]), /1 to 100/);
+  Orbit.uninit(win);
+});
+
+test("Orbit commands' tab overview request reaches only the overlay canvas", () => {
+  const win = createWindow();
+  const tabCanvas = createCanvasTab(win);
+  const native = Orbit.connectCanvas(tabCanvas.canvas);
+  assert.equal(native.consumeOverview, undefined, "a new-tab canvas is never asked to open the overview");
+  const heard = [];
+  native.subscribe((tabs, change) => { if (change?.type === "overview") heard.push("tab"); });
+  Orbit.openOverview(win);
+  assert.equal(win.document.getElementById("orbit-canvas-overlay").hidden, false, "the overlay canvas opens");
+  const overlay = win.OrbitChrome;
+  overlay.subscribe((tabs, change) => { if (change?.type === "overview") heard.push("overlay"); });
+  assert.equal(overlay.consumeOverview(), true, "a canvas that starts after the request still sees it");
+  assert.equal(overlay.consumeOverview(), false, "the request is used once");
+  Orbit.openOverview(win);
+  assert.deepEqual(heard, ["overlay"]);
+
+  // The window bridge is the overlay's own: its saves are not echoed back,
+  // while a save by browser chrome reaches the overlay like any other edit.
+  const boards = [];
+  overlay.subscribe((tabs, change) => { if (change?.type === "board-changed") boards.push(change.board.frames.length); });
+  overlay.saveBoard({ version: 1, camera: { x: 0, y: 0, zoom: 1 }, items: [], connections: [], strokes: [],
+    frames: [{ id: "own", title: "Own", color: "#8c86f4", x: 0, y: 0, w: 300, h: 200 }] });
+  assert.deepEqual(boards, [], "the overlay keeps its own undo history");
+  const state = Orbit._windows.get(win);
+  const board = state.getBoard();
+  board.frames.push({ id: "chrome", title: "Chrome", color: "#70ded3", x: 400, y: 0, w: 300, h: 200 });
+  state.saveBoard(board);
+  assert.deepEqual(boards, [2], "browser chrome's save reaches the overlay");
+
+  // In the overview, Escape belongs to the canvas page, which leaves the overview.
+  const escape = () => {
+    const event = Object.assign(new Event("keydown", { cancelable: true }), {
+      key: "Escape", altKey: false, shiftKey: false, ctrlKey: false, metaKey: false, repeat: false,
+    });
+    win.dispatchEvent(event);
+    return event;
+  };
+  const page = win.document.getElementById("orbit-canvas-frame").contentDocument;
+  page.documentElement = { dataset: { orbitOverview: "true" } };
+  assert.equal(escape().defaultPrevented, false);
+  assert.equal(win.document.getElementById("orbit-canvas-overlay").hidden, false, "Escape leaves the overview, not the canvas");
+  delete page.documentElement.dataset.orbitOverview;
+  assert.equal(escape().defaultPrevented, true);
+  assert.equal(win.document.getElementById("orbit-canvas-overlay").hidden, true, "outside the overview, Escape closes the canvas");
+  Orbit.uninit(win);
 });
 
 test("selected text captures a bounded plain note and source URL, never password content", () => {

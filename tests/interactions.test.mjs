@@ -722,3 +722,66 @@ test("the tools quarter stays open when it grows over its own corner sensor unde
   assert.equal(islandVisible(state, "tools"), false, "moving away still conceals it after the grace period");
   state.destroy();
 });
+
+test("tab commands close a tab, add it to the canvas or file it into a frame without leaving the palette", () => {
+  const win = createWindow(); const state = new InteractionWindow(win);
+  const sent = [];
+  modules.Orbit.sendTabsToCanvas = (target, tabs, frameId) => sent.push({ target, tabs, frameId });
+  frames.set(win, [{ id: "reading", title: "Reading list", tabCount: 1 }]);
+  const browser = new Node(win.document); browser.currentURI = { spec: "https://news.example/" };
+  const news = { label: "News", linkedBrowser: browser };
+  const settingsBrowser = new Node(win.document); settingsBrowser.currentURI = { spec: "about:preferences" };
+  const settings = { label: "Settings", linkedBrowser: settingsBrowser };
+  win.gBrowser.tabs.push(news, settings);
+  win.gBrowser.removeTab = tab => {
+    win.gBrowser.tabs = win.gBrowser.tabs.filter(value => value !== tab);
+    win.gBrowser.tabContainer.emit("TabClose");
+  };
+  try {
+    state.open(); state.input.value = "News"; state.update();
+    assert.equal(state.results[0].label, "News");
+    assert.match(state.hint.textContent, /Ctrl\+Enter to add to canvas · Alt\+Enter for a frame · Shift\+Delete to close/);
+    const row = state.list.children[0];
+    assert.deepEqual(row.children.at(-1).children.map(node => node.orbitTabAction), ["frame", "canvas", "close"]);
+
+    const add = key("Enter", { ctrlKey: true }); state.keydown(add);
+    assert.equal(add.defaultPrevented, true);
+    assert.deepEqual(sent.map(entry => [entry.target, entry.tabs[0], entry.frameId]), [[win, news, null]]);
+    assert.equal(state.palette.hidden, false, "adding a tab keeps Orbit commands open");
+    assert.equal(win.gBrowser.selectedTab, win.gBrowser.tabs[0], "adding a tab does not switch to it");
+
+    state.keydown(key("Enter", { altKey: true }));
+    assert.ok(state.placing, "Alt+Enter lists the places the tab can go");
+    assert.deepEqual(state.results.map(command => command.label), ["On the canvas", "Reading list"]);
+    assert.match(state.hint.textContent, /Esc to go back/);
+    state.keydown(key("Escape"));
+    assert.equal(state.placing, null); assert.equal(state.palette.hidden, false, "Escape returns to the search");
+    assert.equal(state.input.value, "News");
+    state.keydown(key("Enter", { altKey: true }));
+    state.input.value = "Reading"; state.update(); state.keydown(key("Enter"));
+    assert.equal(sent.at(-1).frameId, "reading");
+    assert.equal(state.placing, null); assert.equal(state.input.value, "News", "filing returns to the original search");
+    assert.equal(state.palette.hidden, false);
+
+    // A pointer click on the row's close button closes only that tab.
+    row.emit("click", { originalTarget: row.children.at(-1).children.at(-1) });
+    assert.equal(win.gBrowser.tabs.includes(news), false);
+    assert.equal(state.palette.hidden, false);
+    assert.equal(state.results.some(command => command.label === "News"), false);
+
+    state.input.value = "Settings"; state.update();
+    assert.deepEqual(state.list.children[0].children.at(-1).children.map(node => node.orbitTabAction), ["close"],
+      "a non-website tab offers no canvas actions");
+    state.keydown(key("Enter", { ctrlKey: true }));
+    assert.equal(sent.length, 2, "a non-website tab is never sent to the canvas");
+    state.keydown(key("Delete", { shiftKey: true }));
+    assert.equal(win.gBrowser.tabs.includes(settings), false);
+
+    state.input.value = "focus"; state.update();
+    const plain = key("Delete", { shiftKey: true }); state.keydown(plain);
+    assert.equal(plain.defaultPrevented, false, "Shift+Delete on a command is left to the field");
+  } finally {
+    delete modules.Orbit.sendTabsToCanvas;
+    state.destroy();
+  }
+});
